@@ -1,0 +1,140 @@
+# Terranet local lab (M1). Isolated by construction:
+#  - rails/sidekiq/vite/postgres/redis/mailpit live ONLY on `lab_internal` (internal: true => no route out).
+#  - `gateway` is the only container on the host-facing network; it publishes 127.0.0.1 ports only.
+#  - `dns-sink` answers every non-lab name with a blackhole address and logs the query (egress audit).
+#  - `bootstrap` (profile) is the only app-code service with internet access (pnpm install); `gateway` also sits on
+#    the edge network but only runs socat port forwarders.
+# Uses the official docker/Dockerfile unchanged. No production host, bucket or secret is referenced.
+name: terranet-lab
+
+x-app: &app
+  image: terranet-chatwoot-lab:4.19.1-dev
+  build:
+    context: ../..
+    dockerfile: docker/Dockerfile
+    args:
+      BUNDLE_WITHOUT: ''
+      EXECJS_RUNTIME: Node
+      RAILS_ENV: development
+      RAILS_SERVE_STATIC_FILES: 'false'
+  env_file: .env
+  dns: [172.29.250.2]
+  networks: [lab_internal]
+  volumes:
+    - ../..:/app:delegated
+    - node_modules:/app/node_modules
+    - packs:/app/public/packs
+    - cache:/app/tmp/cache
+
+services:
+  dns-sink:
+    build: ./dns-sink
+    restart: unless-stopped
+    networks:
+      lab_internal:
+        ipv4_address: 172.29.250.2
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    dns: [172.29.250.2]
+    networks: [lab_internal]
+    volumes: [postgres:/var/lib/postgresql/data]
+    environment:
+      POSTGRES_DB: chatwoot
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d chatwoot"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    dns: [172.29.250.2]
+    networks: [lab_internal]
+    command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\""]
+    env_file: .env
+    volumes: [redis:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    dns: [172.29.250.2]
+    networks: [lab_internal]
+
+  rails:
+    <<: *app
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    environment:
+      NODE_ENV: development
+      RAILS_ENV: development
+      VITE_DEV_SERVER_HOST: vite
+    entrypoint: docker/entrypoints/rails.sh
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+
+  sidekiq:
+    <<: *app
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    environment:
+      NODE_ENV: development
+      RAILS_ENV: development
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+
+  vite:
+    <<: *app
+    environment:
+      VITE_DEV_SERVER_HOST: 0.0.0.0
+      VITE_RUBY_HOST: 0.0.0.0
+      NODE_ENV: development
+      RAILS_ENV: development
+    # Official vite.sh runs `pnpm install --force` (needs internet); here deps come from `lab.sh bootstrap`.
+    command: ["bin/vite", "dev"]
+
+  gateway:
+    image: alpine/socat:latest
+    restart: unless-stopped
+    networks: [lab_internal, lab_edge]
+    ports:
+      - "127.0.0.1:${LAB_RAILS_PORT:-13000}:3000"
+      - "127.0.0.1:${LAB_VITE_PORT:-13036}:3036"
+      - "127.0.0.1:${LAB_MAILPIT_PORT:-18025}:8025"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        socat TCP-LISTEN:3000,fork,reuseaddr TCP:rails:3000 &
+        socat TCP-LISTEN:3036,fork,reuseaddr TCP:vite:3036 &
+        socat TCP-LISTEN:8025,fork,reuseaddr TCP:mailpit:8025 &
+        wait
+
+  bootstrap:
+    <<: *app
+    profiles: [bootstrap]
+    networks: [lab_edge]
+    dns: []
+    entrypoint: ["sh", "-c"]
+    command: ["CI=true pnpm install --frozen-lockfile"]
+
+networks:
+  lab_internal:
+    internal: true
+    ipam:
+      # dynamic addresses come from the upper half so 172.29.250.2 stays free for dns-sink
+      config: [{subnet: 172.29.250.0/24, ip_range: 172.29.250.128/25}]
+  lab_edge: {}
+
+volumes:
+  postgres:
+  redis:
+  node_modules:
+  packs:
+  cache:

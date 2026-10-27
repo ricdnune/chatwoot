@@ -15,3 +15,6 @@ vendor/bundle
 .DS_Store
 *.swp
 *~
+
+# Terranet lab secrets (dev-only) must never enter the image context
+terranet/lab/.env
