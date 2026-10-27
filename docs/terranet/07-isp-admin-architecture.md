@@ -1,6 +1,6 @@
 # 07 — ADR: sección nativa "Terranet ISP" en Super Admin (M4.0 — diagnóstico, sin código)
 
-Estado: **PROPUESTA para aprobación** · Fecha: 2026-10-27 · Base `v4.19.1`, edición Community (Camino B).
+Estado: **opción A APROBADA por el propietario solo para prototipo local (2026-10-27); implementada en M4.1, ver `12-isp-module-m4-1.md` (incluye las diferencias respecto a este ADR, §7)** · Fecha: 2026-10-27 · Base `v4.19.1`, edición Community (Camino B).
 Alcance de esta iteración: inspección real del repositorio y de la documentación oficial vigente. **No se escribió código del módulo, no se usó ningún token real, no se llamó a WispHub ni a SmartOLT con credenciales.** (Se descargaron las páginas/especificaciones públicas de documentación.)
 Convención: **FACT** (archivo/URL) · **INFERENCE** · **DECISION** · **UNVERIFIED**.
 
