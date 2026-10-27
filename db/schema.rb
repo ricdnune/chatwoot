@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_10_19_143116) do
+ActiveRecord::Schema[7.1].define(version: 2026_10_27_212607) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1708,6 +1708,66 @@ ActiveRecord::Schema[7.1].define(version: 2026_10_19_143116) do
     t.string "icon_color", default: ""
     t.index ["account_id"], name: "index_teams_on_account_id"
     t.index ["name", "account_id"], name: "index_teams_on_name_and_account_id", unique: true
+  end
+
+  create_table "terranet_isp_audit_events", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "actor_id"
+    t.string "action", null: false
+    t.string "outcome", null: false
+    t.string "subject_type"
+    t.bigint "subject_id"
+    t.string "request_id"
+    t.jsonb "metadata", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.index ["account_id", "created_at"], name: "idx_terranet_isp_audit_account_created"
+  end
+
+  create_table "terranet_isp_bindings", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "contact_id", null: false
+    t.string "wisphub_service_id", null: false
+    t.string "smartolt_external_id"
+    t.string "matched_by", null: false
+    t.string "status", default: "candidate", null: false
+    t.string "decision_reason"
+    t.bigint "decided_by_id"
+    t.datetime "decided_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "contact_id", "wisphub_service_id"], name: "idx_terranet_isp_bindings_unique_link", unique: true
+    t.index ["account_id", "status"], name: "idx_terranet_isp_bindings_account_status"
+  end
+
+  create_table "terranet_isp_connection_checks", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "credential_id", null: false
+    t.bigint "actor_id"
+    t.boolean "ok", default: false, null: false
+    t.integer "http_status"
+    t.integer "latency_ms"
+    t.string "error_code"
+    t.string "mode", null: false
+    t.datetime "created_at", null: false
+    t.index ["credential_id", "created_at"], name: "idx_terranet_isp_checks_credential_created"
+  end
+
+  create_table "terranet_isp_provider_credentials", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.string "provider", null: false
+    t.string "environment", default: "sandbox", null: false
+    t.string "subdomain"
+    t.text "secret"
+    t.string "status", default: "not_configured", null: false
+    t.datetime "last_checked_at"
+    t.integer "last_latency_ms"
+    t.string "last_error_code"
+    t.datetime "rate_limited_until"
+    t.datetime "rotated_at"
+    t.bigint "rotated_by_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "provider"], name: "idx_terranet_isp_credentials_account_provider", unique: true
   end
 
   create_table "user_sessions", force: :cascade do |t|
