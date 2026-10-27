@@ -26,12 +26,6 @@ x-app: &app
     - node_modules:/app/node_modules
     - packs:/app/public/packs
     - cache:/app/tmp/cache
-  # Community Edition: config/application.rb:49 puts enterprise/app/views FIRST in the view path even with
-  # DISABLE_ENTERPRISE=true, and e.g. the Enterprise confirmation mail calls Account#saml_enabled? (undefined in CE).
-  # An empty tmpfs over that directory (container only, host tree untouched) restores the OSS views.
-  # Production must instead ship an artifact built WITHOUT enterprise/ (see `lab.sh foss-check`).
-  tmpfs:
-    - /app/enterprise/app/views
 
 services:
   dns-sink:

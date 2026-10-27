@@ -1,118 +1,142 @@
-# 03 — Auditoría de privacidad y egress (M2, parte 1: hallazgos y pruebas)
+# 03 — Privacidad y egress (M2)
 
-Base: `terranet/main` = `v4.19.1`. Laboratorio: `terranet/lab/` (ver `01-local-development.md`). Convención: **FACT** (archivo/commit o ejecución en el lab) · **INFERENCE** · **DECISION** · **UNVERIFIED**.
+Base: `terranet/main` = `v4.19.1` · Rama de trabajo: `terranet/feature/m2-privacy-egress` · Edición: **Community (Camino B, decisión del propietario)**.
+Convención: **FACT** (archivo o ejecución en el lab) · **INFERENCE** · **DECISION** · **UNVERIFIED**.
 
-**Estado de M2: NO terminado.** Se auditó el código y se obtuvo evidencia de runtime inicial; faltan el parche/configuración final, las pruebas de regresión automatizadas y la política de egress en red. No se ha tocado producción.
+## 1. Estado
 
-## 1. Resumen ejecutivo
+| Criterio de cierre de M2 | Estado |
+|---|---|
+| Telemetría/relay/registro controlados por código **y** tests | ✅ `TERRANET_PRIVACY_MODE` + 19 specs propios + auditoría de egress (§5) |
+| Árbol Git no se modifica inadvertidamente | ✅ `lab.sh` solo **informa** (exit 3), no revierte; annotate y volcado de schema neutralizados por configuración (§6) |
+| Laboratorio arranca correctamente | ✅ arranque desde cero verificado (§5.4) |
+| Excepciones a la política documentadas | ✅ §8 |
+| Pendiente (no bloquea M2) | Push móvil real (sin app móvil), HMAC WhatsApp (→ M2.1), artefacto de producción sin `enterprise/` (§7) |
 
-1. **FACT (runtime):** `DISABLE_TELEMETRY=true` **no** logra "cero tráfico a Chatwoot". Elimina los contadores de uso (`accounts_count`, `users_count`, `conversations_count`, …) y los eventos (`emit_event`), pero el job diario de versión **sigue enviando** a `https://hub.2.chatwoot.com/ping`: `installation_identifier`, `installation_version`, `installation_host`, `installation_env`, `edition` (ver §3, prueba A vs B).
-2. **FACT (código):** la variable se evalúa como `ENV['DISABLE_TELEMETRY']` (`lib/chatwoot_hub.rb:88,122`): **cualquier valor no nulo —incluso `false` o cadena vacía— la activa**. Para "apagar" la protección hay que no definir la variable. (Trampa operativa; documentar.)
-3. **FACT (código):** en la edición con overlay Enterprise, el mismo ping diario **recibe el plan licenciado** y lo escribe en `installation_configs` (`INSTALLATION_PRICING_PLAN`, `…_QUANTITY`) más tres claves de widget de soporte de Chatwoot (`CHATWOOT_SUPPORT_*`), y luego reconcilia features premium (`enterprise/app/jobs/enterprise/internal/check_new_versions_job.rb`). **Bloquear `hub.2.chatwoot.com` en un despliegue con licencia Enterprise rompe la sincronización del plan.** Zero-egress y Enterprise licenciado son incompatibles; hay que decidir (ver §7).
-4. **FACT (runtime frontend):** login + dashboard + lista de conversaciones en el lab generaron **solo** peticiones a `127.0.0.1:13000` (ninguna a terceros ni a Chatwoot). Es una muestra, no una prueba exhaustiva (ver §6).
-5. **FACT (código):** el panel de changelog del sidebar (que consulta `hub.2.chatwoot.com/changelogs` desde el navegador del agente) solo se monta si `isOnChatwootCloud` (`components-next/sidebar/Sidebar.vue:1089-1102`): no se renderiza en self-hosted. Sin embargo, `v3/api/testimonials.js` consulta `testimonials.cdn.chatwoot.com` en la pantalla de **signup** (`Testimonials/Index.vue`); con `ENABLE_ACCOUNT_SIGNUP=false` no debería cargarse (**UNVERIFIED** en runtime).
+## 2. Hallazgos principales (FACT, con evidencia en §5)
 
-## 2. Mecanismos de salida hacia Chatwoot-gestionado (FACT, código)
+1. **`DISABLE_TELEMETRY=true` no basta.** Quita contadores/eventos pero el job diario sigue enviando a `hub.2.chatwoot.com/ping`: `installation_identifier`, `installation_version`, `installation_host`, `installation_env`, `edition`. Además cualquier valor de la variable (incluso `false` o vacío) la activa (`lib/chatwoot_hub.rb:88,122`).
+2. **El onboarding envía datos del propietario por defecto:** la casilla "subscribe to updates" viene **premarcada** (`app/views/installation/onboarding/index.html.erb`) y dispara `register_instance` con nombre de empresa, nombre y email del dueño. Afecta a toda reinstalación/instancia nueva.
+3. **Bloquear solo por red es ruidoso:** con el hub inalcanzable, `Internal::CheckNewVersionsJob` falla cada día con `NoMethodError: undefined method '[]' for nil` (`sync_with_hub` devuelve `nil` tras rescatar el error y el job indexa `@instance_info['version']`). Se observó en el control del laboratorio. Por eso el control principal es de **aplicación**, no solo de red.
+4. **Gravatar y Google Favicons envían datos de contactos:** `www.gravatar.com` (MD5 del email) y `www.google.com/s2/favicons?domain=…` (dominio de la empresa del contacto). Ambos observados por DNS en el laboratorio sin controles.
+5. **`DISABLE_GRAVATAR` se persiste:** `GlobalConfigService.load` copia la variable a `installation_configs` en la primera lectura (si se quita después, sigue activa) y varias lecturas concurrentes compiten por el índice único (se vieron `PG::UniqueViolation` reintentados). Mitigación: precalentar la lectura en el arranque (`lab.sh up` lo hace).
+6. **En Enterprise licenciado el mismo ping trae el plan** (`Enterprise::Internal::CheckNewVersionsJob#update_plan_info`). No aplica en el Camino B, pero explica por qué no se toca `enterprise/`.
+7. **`DISABLE_ENTERPRISE=true` no es suficiente en Community:** `config/application.rb:49` antepone `enterprise/app/views` aunque la variable esté activa y el correo `devise/mailer/confirmation_instructions` de Enterprise llama a `Account#saml_enabled?` (solo existe en Enterprise) → **10 fallos** en `spec/mailers/confirmation_instructions_spec.rb` y el correo de confirmación/invitación no se genera. Con una copia **sin `enterprise/`** (como hace el workflow FOSS de upstream, `run_foss_spec.yml:121-124`): 0 fallos. Ver §7.
 
-| # | Mecanismo | Ruta / línea | Destino | Datos | Control |
+## 3. Controles implementados
+
+| Control | Tipo | Dónde | Efecto |
+|---|---|---|---|
+| `TERRANET_PRIVACY_MODE=true` | **parche T3 mínimo (48 líneas netas en `app/`+`lib/`)** | `lib/terranet/privacy.rb`, `lib/terranet/chatwoot_hub_privacy.rb`, +1 línea en `lib/chatwoot_hub.rb`, +1 en `app/jobs/avatar/avatar_from_favicon_job.rb`, casilla oculta en `app/views/installation/onboarding/index.html.erb` | Ninguna petición a `hub.2.chatwoot.com` (ping, registro, push relay, eventos). `sync_with_hub` devuelve `{}` (el job queda como no-op **sin suprimir excepciones**). No se pide el favicon a Google (la UI usa su avatar de iniciales). Casilla de suscripción oculta |
+| `DISABLE_TELEMETRY=true` | config (upstream) | env | se mantiene como defensa adicional |
+| `DISABLE_GRAVATAR=1` | config (upstream) | env | no se consulta Gravatar |
+| `ENABLE_PUSH_RELAY_SERVER=false` | config (upstream) | env | `PushNotificationService` no usa el relay (gate en `push_notification_service.rb:114-116`) |
+| `DISABLE_ENTERPRISE=true` | config (upstream) | env | edición Community (+ ver §7) |
+| `ENABLE_ACCOUNT_SIGNUP=false` | config (upstream) | env | `/app/auth/signup` redirige a login; no se piden testimonios |
+
+Diseño del parche (fácil de rebasar): un módulo `prepend` sobre `ChatwootHub.singleton_class` que cubre los **cuatro** únicos métodos que llegan a la red (`sync_with_hub`, `register_instance`, `send_push_with_response` —de donde cuelga `send_push`—, `emit_event`). No se tocó `enterprise/`. Off por defecto: sin la variable el comportamiento upstream es idéntico.
+
+## 4. Destinos externos — antes / después
+
+| Destino | Motivo upstream | Datos | Antes (M1) | Después (privacidad ON) | Decisión |
 |---|---|---|---|---|---|
-| 1 | Ping diario de versión | `app/jobs/internal/check_new_versions_job.rb` (solo `Rails.env.production?`), programado desde `Internal::TriggerDailyScheduledItemsJob` (cron diario, minuto estable por instalación) → `ChatwootHub.sync_with_hub` | `POST hub.2.chatwoot.com/ping` | `installation_identifier` (UUID persistente), versión, host (`FRONTEND_URL`), `INSTALLATION_ENV`, `CW_EDITION` **+ contadores** salvo `DISABLE_TELEMETRY` | Contadores: `DISABLE_TELEMETRY`. **Ping base: sin interruptor**; requiere parche T3 o bloqueo de red |
-| 2 | Eventos | `ChatwootHub.emit_event` (`lib/chatwoot_hub.rb:121`) | `POST …/events` | evento + identificador | `DISABLE_TELEMETRY` (en v4.19.1 **no hay llamadores** en `app/`, `lib/`, `enterprise/`, `config/`) |
-| 3 | Registro de instancia | `Installation::OnboardingController#finish_onboarding` → `register_instance` | `POST …/instances` | **nombre de empresa, nombre y email del dueño**, identificador | Solo si en el onboarding se marca `subscribe_to_updates`; **no marcarlo**. Sin variable de control |
-| 4 | Relay de push móvil | `Notification::PushNotificationService#send_push_via_chatwoot_hub` → `ChatwootHub.send_push` | `POST …/send_push` | token FCM + título/URL de la notificación + identificador | `ENABLE_PUSH_RELAY_SERVER=false` (gate en `push_notification_service.rb:114-116` y `push_test_service.rb:90`); además se omite si hay `FIREBASE_PROJECT_ID`+`FIREBASE_CREDENTIALS` propios |
-| 5 | Plan/licencia y soporte (Enterprise) | `Enterprise::Internal::CheckNewVersionsJob#update_plan_info` | respuesta del ping | **entrada**, escribe config local | ver hallazgo 3 |
-| 6 | Widget de soporte en Super Admin | `app/views/super_admin/application/_javascript.html.erb:23-50` | `CHATWOOT_SUPPORT_SCRIPT_URL` (vacío por defecto; lo llena la respuesta del ping en #5) | si está configurado: `setUser(installation_identifier, {email, name})` del **primer SuperAdmin** | No poblar (`CHATWOOT_SUPPORT_*` vacíos); evitar #5 o limpiar esas claves. **UNVERIFIED** qué respuestas del hub las llenan |
-| 7 | Changelog (navegador) | `shared/constants/links.js:11` + `SidebarChangelogCard.vue` | `GET hub.2.chatwoot.com/changelogs` | IP/UA del agente | Inactivo en self-hosted (hallazgo 5); verificar en runtime con DevTools |
-| 8 | Testimonios (navegador) | `dashboard/constants/globals.js:44` | `GET testimonials.cdn.chatwoot.com/testimonial-content.json` | IP/UA | Solo pantalla de signup |
-| 9 | Enlaces de ayuda/estado/blog | `globals.js:41-47,82` (`www.chatwoot.com/docs`, `status.chatwoot.com/…`) | solo al hacer clic | — | Son enlaces, no tráfico automático; revisar en branding |
-| 10 | Chequeo manual de versión | `app/controllers/super_admin/settings_controller.rb:5` → `CheckNewVersionsJob.perform_now` | hub (solo producción) | igual que #1 | Acción manual del superadmin |
+| `hub.2.chatwoot.com/ping` | versión/telemetría (diario, prod) | id instalación, versión, host, env, edición (+ contadores sin `DISABLE_TELEMETRY`) | enviaba | **0 consultas DNS, 0 paquetes** | **Bloquear** |
+| `…/instances` | registro en onboarding | empresa, nombre, email del dueño | enviaba si casilla marcada (premarcada) | no se ofrece ni se envía | **Bloquear** |
+| `…/send_push` | relay push apps móviles oficiales | token FCM, título/URL, id instalación | enviaba salvo `ENABLE_PUSH_RELAY_SERVER=false` | no se envía | **Bloquear** (impacto §9) |
+| `…/events` | eventos | evento + id | sin llamadores en v4.19.1 | no se envía | **Bloquear** |
+| `…/changelogs` (navegador) | tarjeta de novedades | IP/UA del agente | solo si `isOnChatwootCloud` (`Sidebar.vue:1089-1102`) | no se solicita (0 hosts externos en 7 pantallas) | **Bloquear** |
+| `testimonials.cdn.chatwoot.com` | pantalla de signup | IP/UA | solo en signup | signup redirige; 0 peticiones | **Bloquear** |
+| `www.gravatar.com` | avatar por email | MD5 del email | consultaba (2 consultas DNS) | 0 (con `DISABLE_GRAVATAR`) | **Bloquear** |
+| `www.google.com/s2/favicons` | avatar de empresa | dominio de la empresa | consultaba | 0 (modo privacidad) | **Bloquear** |
+| `stun.l.google.com` | llamadas de voz (código **Enterprise**) | IP | no activo en Community | no activo | Bloquear (si algún día se usan llamadas, decisión aparte) |
+| Widget de soporte en Super Admin | soporte Chatwoot | email/nombre del primer SuperAdmin | solo si `CHATWOOT_SUPPORT_*` poblados (los puebla el hub, §2.6) | `/packs/js/sdk.js` se pide **al propio servidor** con token vacío; 0 hosts externos | Dejar vacío |
+| Sentry/Datadog/APM/Amplitude/Clarity… | observabilidad | — | solo con DSN/tokens | no configurados | Bloquear salvo decisión explícita |
+| Analítica del Help Center (GA4/GTM/Hotjar/Plausible/Pixel…) | portales | visitantes | solo si un admin pone IDs | no configurado | Política: no usar |
+| `openrouter.ai` / OpenAI (Captain) | IA | conversaciones | solo con claves; Captain es **Enterprise** | no aplica en Community | n/a |
+| `www.chatwoot.com`, `chwt.app`, `status.chatwoot.com`, `chatwoot.help` | enlaces de ayuda | — | solo al hacer clic | idem | Permitir como **enlaces manuales** |
+| `github.com` | upstream (solo desarrolladores) | — | `git fetch` | idem | Permitir en máquina de desarrollo; **no** en runtime |
 
-## 3. Pruebas de runtime realizadas (repetibles)
+## 5. Pruebas y evidencia (ejecutadas el 2026-10-27)
 
-Script: `terranet/lab/scripts/egress_probe.rb` (reemplaza `RestClient.post` por un registrador; imprime **destino y nombres de campos, nunca valores**). Ejecución: `terranet/lab/lab.sh rails runner terranet/lab/scripts/egress_probe.rb`.
+### 5.1 Specs propios — `./lab.sh rspec-terranet` → **19 ejemplos, 0 fallos**
+Archivos: `spec/lib/terranet/chatwoot_hub_privacy_spec.rb`, `spec/lib/terranet/privacy_spec.rb` (tripwire de actualización), `spec/jobs/internal/check_new_versions_job_privacy_spec.rb`, `spec/jobs/avatar/avatar_from_{gravatar,favicon}_job_privacy_spec.rb`, `spec/controllers/installation/onboarding_controller_privacy_spec.rb`, `spec/services/notification/push_notification_service_privacy_spec.rb`.
+- Con privacidad ON: ninguna llamada a `RestClient.post` ni petición WebMock a `*chatwoot.com`/`google.com` (WebMock del `spec_helper` bloquea toda conexión real).
+- Con privacidad OFF y red **mockeada**: la telemetría sigue activa (contadores en `/ping`, `/events`) → cubre "tests que requieren telemetría habilitada" sin conectividad.
+- `DISABLE_TELEMETRY` solo: el ping residual con identificador queda documentado como test.
+- **Prueba de mutación:** quitando la línea `prepend` de `lib/chatwoot_hub.rb` fallan **6** ejemplos; restaurada, pasan los 19.
+- Tripwire de upgrade (`privacy_spec.rb`): falla si aparece un llamador nuevo de `ChatwootHub`, un host `*.chatwoot.com` nuevo en constantes del frontend o un segundo archivo Ruby con `hub.2.chatwoot.com`.
 
-**A) Lab con `DISABLE_TELEMETRY=true`, `ENABLE_PUSH_RELAY_SERVER=false`**
+### 5.2 Los dos fallos conocidos de `chatwoot_hub_spec` — **aislados, no eliminados**
+Causa: el `.env` del lab define `DISABLE_TELEMETRY=true` y los specs upstream asumen telemetría activa. `lab.sh rspec` ahora corre **herméticamente** (quita las variables propias del lab, `SPEC_UNSET`) → `spec/lib/chatwoot_hub_spec.rb` pasa. `./lab.sh rspec-privacy` ejecuta lo mismo con los controles ON: fallan 6 ejemplos **esperados** (5 de hub que esperan HTTP + 1 de Gravatar que espera la cola), lo que documenta qué supuestos upstream cambian.
+
+### 5.3 Conjuntos de regresión
+| Comando | Resultado |
+|---|---|
+| `./lab.sh rspec spec/terranet…` (ver §5.1) | 19 / 0 fallos |
+| `./lab.sh rspec spec/lib spec/controllers/installation spec/controllers/webhooks spec/jobs spec/mailers spec/services/notification spec/models/company_spec.rb spec/models/user_spec.rb spec/models/contact_spec.rb spec/helpers` (+ specs propios) | **1 492 ejemplos, 0 fallos** (con `spec/enterprise` excluido) |
+| `./lab.sh vitest app/javascript/shared app/javascript/dashboard/helper` | 78 archivos, **1 672 tests** pasan |
+| RuboCop sobre `lib/terranet`, `lib/chatwoot_hub.rb`, el job de favicon y los 8 specs tocados | **0 ofensas** |
+| ESLint sobre `shared/constants`, `dashboard/constants`, `dashboard/api/changelog.js` | 0 errores (**no se cambió JS/Vue**) |
+| Suite completa RSpec/Vitest | **No ejecutada** (pendiente; correrla antes de cada release) |
+
+### 5.4 Arranque limpio y flujos (laboratorio)
+`./lab.sh reset && ./lab.sh up` → rc=0 en ~25 s con imagen en caché; `/api` = `{"version":"4.19.1","queue_services":"ok","data_services":"ok"}`; `git status` sin cambios no deseados. Login API 200; login UI → dashboard → conversación sintética "Jane"; correo de confirmación se renderiza (6 689 B); sidebar sin entradas Enterprise (Captain/Calls). **DNS del lab tras el arranque y navegación: ninguna consulta.** Sidekiq procesa `EventDispatcherJob`, `ActionCableBroadcastJob`, `TriggerScheduledItemsJob`, `Internal::CheckRingingTimeoutsJob`, `Avatar::AvatarFromGravatarJob` (no-op) sin errores (solo avisos de deprecación upstream de `enum`).
+
+**Navegador (panel integrado), hosts cargados por pantalla:** login, dashboard, conversación 1, bandeja de inboxes, contactos, portales/Help Center (`portals/new`), Super Admin (`/super_admin/sign_in` y panel), `/app/auth/signup` (redirige a login): **todos solo `127.0.0.1:13000`**, 0 recursos externos, sin `testimonials`. Muestra amplia pero no exhaustiva (no se probaron el widget de chat ni el Help Center público con contenido).
+
+### 5.5 Auditoría de egress del flujo de **producción simulado** — `./lab.sh audit-egress`
+Corre `RAILS_ENV=production` sobre una DB desechable (`chatwoot_prodsim`, Redis índice 6) con datos sintéticos, ejecuta en línea: disparador diario → job de versión, `register_instance`, `emit_event`, `send_push`, creación de contacto (Gravatar), creación de empresa (favicon) y notificación con suscripción FCM; el runner enruta por `egress-sink` (tcpdump) y el DNS por `dns-sink`.
+
 ```
-sync_with_hub  -> POST https://hub.2.chatwoot.com/ping
-                  keys: edition, installation_env, installation_host, installation_identifier, installation_version
-emit_event     -> (no outbound call)
-register_instance -> POST https://hub.2.chatwoot.com/instances  (keys incl. company_name, owner_name, owner_email)
-send_push (llamada directa) -> POST https://hub.2.chatwoot.com/send_push
+=== PRIVACY ON (production simulation)         env=production enterprise=nil privacy=true …
+  ok × 8 pasos
+--- DNS queries matching /chatwoot|gravatar|google/:   (none)
+--- packets seen by egress-sink:                       (none)
+=== CONTROL: privacy OFF (+ direct-IP probe)
+  err daily trigger / version check: NoMethodError: undefined method '[]' for nil     <- hallazgo 3
+--- DNS queries:   35 hub.2.chatwoot.com · 2 www.google.com · 2 www.gravatar.com
+--- packets:        5 172.29.250.136 -> 192.0.2.1.443 · 1 172.29.250.136 -> 203.0.113.9.443 (IP directa, sin DNS)
+AUDIT PASS: no forbidden DNS queries and no packets with privacy ON; control run detected
 ```
-**B) Control, sin `DISABLE_TELEMETRY` (comportamiento upstream)**
-```
-sync_with_hub  -> POST …/ping   keys: A + accounts_count, users_count, inboxes_count, conversations_count,
-                                incoming_messages_count, outgoing_messages_count, additional_information
-emit_event     -> POST …/events
-```
-Lectura: la variable funciona para #2 y para los contadores de #1 (**CONFIRMADO**), no para el ping base (#1), ni #3. En A, `send_push` se llamó **directamente**; el gate de `ENABLE_PUSH_RELAY_SERVER` vive en el servicio llamador, por lo que esta prueba no demuestra el gate (pendiente: prueba de `Notification::PushNotificationService` con suscripción FCM sintética).
+El script **falla (exit 2)** si el control no es detectado (detector ciego) y (exit 1) si hay fuga con privacidad ON. Limitación: cubre las rutas enumeradas; una llamada nueva no listada solo la atrapa el tripwire estático (§5.1) o el DNS/paquetes si el flujo la ejerce.
 
-**Specs upstream:** `spec/lib/chatwoot_hub_spec.rb` — 8 ejemplos. Con `DISABLE_TELEMETRY=true` en el entorno **2 fallan** (`sync_with_hub` y `emit_event` esperan payload con contadores/eventos); con la variable eliminada **8/8 pasan**. Consistente con lo anterior (el spec no aísla la variable; no es un defecto del producto).
+## 6. Efectos colaterales del laboratorio sobre el árbol Git (corregido)
+- `annotate_rb` reescribía ~28 modelos (incl. `enterprise/`): se desactiva con **`ANNOTATERB_SKIP_ON_DB_TASKS=1`** (variable correcta de `lib/tasks/annotate_rb.rake`; en M1 se usó una incorrecta).
+- `db:migrate` siempre vuelca `db/schema.rb` (`lib/tasks/db_enhancements.rake`): `lab.sh up` prepara la DB con una **copia desechable** montada sobre `db/schema.rb`; el archivo versionado no se toca (informa cuántas líneas habría cambiado). Para desarrollar migraciones se usa `lab.sh rails db:migrate` (sin copia) y los cambios aparecen en Git como corresponde.
+- `lab.sh` ya **no** contiene `git checkout/restore/reset`; `with_tree_check` compara hashes de contenido de todo lo modificado o sin seguimiento antes/después, **informa** rutas y `git diff --stat` y devuelve **exit 3**. Prueba: un archivo sin seguimiento creado dentro del contenedor fue reportado y **no** se borró.
 
-**Aislamiento del lab (prueba):** desde el contenedor `rails` (red interna sin ruta externa): `getent hosts hub.2.chatwoot.com` → `192.0.2.1` (sumidero); `wget https://hub.2.chatwoot.com` → fallo; `wget http://1.1.1.1` → *Network unreachable*. El contenedor `dns-sink` registra cada consulta (`lab.sh dns-log`).
+## 7. Edición Community — hallazgo de despliegue (**DECISION pendiente de aprobación**)
+`DISABLE_ENTERPRISE=true` deja `enterprise/` en disco y en el `eager_load`; sus vistas siguen resolviéndose primero (hallazgo 2.7). Propuesta: **el artefacto de producción debe construirse sin `enterprise/` ni `spec/enterprise/`** (igual que la imagen FOSS de upstream), con `DISABLE_ENTERPRISE=true` como cinturón. Ventajas: correos correctos, sin código Enterprise en nodos de producción ni en imágenes (refuerza el cumplimiento de `enterprise/LICENSE`, que prohíbe distribuir/copiar), mismo camino que prueba upstream en CI. Verificado: `./lab.sh foss-check <specs>` arranca una copia temporal sin `enterprise/` → `enterprise?=false`, correo de confirmación OK, **198 ejemplos / 0 fallos** (specs propios, hub, onboarding, jobs internos, mailers). En el lab diario se enmascara `enterprise/app/views` con un `tmpfs` (solo contenedor) para que los correos funcionen: 1 492/0 fallos.
+Pendiente: construir y probar la imagen de producción sin `enterprise/` (Dockerfile propio o `.dockerignore` de build) — misión separada, sin tocar PVE01/PVE02.
 
-**Frontend (navegador del panel integrado, login `john@acme.inc` sintético del seed):** ~190 peticiones, **todas** a `127.0.0.1:13000` (assets Vite, API, `/brand-assets/*`, `mini-profiler` solo en desarrollo). Sin Gravatar, sin fuentes externas, sin `hub.2.chatwoot.com`, sin analytics.
+## 8. Excepciones y límites de la política de privacidad
+1. **Navegador del agente:** el tráfico del navegador a terceros (p. ej. enlaces de ayuda al hacer clic) es decisión del usuario; el CSP/proxy corporativo es la defensa adicional (§10).
+2. **Cobertura de código:** la política cubre las rutas inventariadas; se re-audita en cada upgrade con el tripwire de §5.1 y `audit-egress`.
+3. **`DISABLE_GRAVATAR` persiste en la DB** (§2.5): si se desea volver atrás hay que borrar la fila `installation_configs.DISABLE_GRAVATAR` y limpiar caché.
+4. **No se bloquea tráfico de canales/servicios necesarios** (Meta, R2, SMTP, WispHub, SmartOLT, DNS/NTP) — ver §11.
+5. Las apps móviles oficiales pierden el relay (§9).
 
-## 4. Conexiones NO-Chatwoot que conviene conocer (FACT salvo indicación)
+## 9. Push móvil — impacto de desactivar los relays (sin afirmar lo no probado)
+- **FACT (código):** `PushNotificationService#perform` hace por suscripción `send_browser_push` (Web Push propio), `send_fcm_push` (solo con `FIREBASE_*` propios) y `send_push_via_chatwoot_hub` (relay). Con `ENABLE_PUSH_RELAY_SERVER=false` o modo privacidad, el relay **no se invoca/no sale a la red** (probado en spec con suscripción FCM sintética).
+- **No probado:** el efecto sobre las **apps móviles oficiales** (no hay app/dispositivo en el lab). **INFERENCE:** dependen del relay (su Firebase es de Chatwoot) y dejarían de recibir push; Web Push de navegador no depende del relay (no verificado en runtime con un navegador suscrito).
+- **DECISION a confirmar con el operador:** aceptar solo Web Push o planificar una app/Firebase propios. No se declara que "funcionan" ni que "dejan de funcionar" hasta probarlo con un dispositivo en staging.
 
-| Destino | Origen | Condición |
-|---|---|---|
-| `www.gravatar.com` | `Avatar::AvatarFromGravatarJob` envía el **MD5 del email** del contacto/agente | Activo por defecto; se desactiva con `DISABLE_GRAVATAR` (cualquier valor no vacío). **Recomendado: activar** (fuga de hashes de email de abonados a un tercero) |
-| `www.google.com/s2/favicons` | `Avatar::AvatarFromFaviconJob` (`app/jobs/avatar/avatar_from_favicon_job.rb:8`) envía el **dominio de la empresa** del contacto al crear/actualizar una `Company`. **Observado en runtime** en el lab (consulta DNS `www.google.com` tras el seed) | Sin interruptor conocido; **UNVERIFIED** si `DISABLE_GRAVATAR` lo cubre (no lo parece). Bloquear por FQDN o parche T3 |
-| `www.gravatar.com` (runtime) | Observado en el lab: 2 consultas DNS tras el seed sintético | confirma la fila anterior |
-| `stun.l.google.com:19302` | `enterprise/app/models/call.rb:45` (STUN por defecto para llamadas de voz, **Enterprise**) | Solo con funciones de llamadas; STUN sin payload de contenido, pero revela IP; evaluar si se usan llamadas |
-| Sentry / Datadog / Elastic APM / New Relic / Scout | `config/application.rb`, `config/initializers/sentry.rb` | Solo si se definen `SENTRY_DSN`, `DD_TRACE_AGENT_URL`, `ELASTIC_APM_SECRET_TOKEN`, `SCOUT_KEY`, … **No definirlos**; `send_default_pii = true` salvo `DISABLE_SENTRY_PII` |
-| Amplitude | `vueapp.html.erb:72-75` | Solo con `CLOUD_ANALYTICS_TOKEN` (vacío por defecto) |
-| Analítica del Help Center (GA4, GTM, Hotjar, Plausible, Amplitude, Clarity, Meta Pixel) | `app/views/layouts/_portal_analytics.html.erb` | Solo si un admin configura los IDs en el portal; **auditar/bloquear por política** |
-| OpenAI / OpenRouter / Firecrawl (Captain) | `config/initializers/ai_agents.rb`, `CAPTAIN_*` | Solo con claves; además Captain es **Enterprise** (ver licencias) |
-| Meta (WhatsApp Cloud/Graph), SMTP, R2 | canales/config | **Necesarios**; permitir por FQDN |
+## 10. Defensa en profundidad de red (diseño, no desplegado)
+Egress por FQDN desde los contenedores de producción vía proxy/DNS filtrante (el `dns-sink` del lab es el modelo): lista **permitida** = §11 + SMTP + NTP + DNS; todo lo demás denegado y registrado. Las IP/CDN cambian, así que se filtra por nombre. Validar con `audit-egress` en staging con la misma política antes de aplicar a producción (acción humana).
 
-## 5. Push móvil (decisión funcional, `ENABLE_PUSH_RELAY_SERVER`)
+## 11. Matriz de conexiones futuras permitidas (**no conectadas todavía**)
+| Servicio | Dirección | Destino / origen | Estado de verificación | Condiciones |
+|---|---|---|---|---|
+| Meta WhatsApp Cloud API (salida) | Rails/Sidekiq → Meta | `graph.facebook.com` (FACT: `Whatsapp::FacebookApiClient::BASE_URI`); descarga de medios en dominios CDN de Meta | host de API **FACT**; dominios de medios **UNVERIFIED** (medir en staging con DNS sink) | Solo por FQDN; token de larga duración en secret store |
+| Meta WhatsApp (webhooks, entrada) | Meta → `…/webhooks/whatsapp/:phone` | IPs/ASN de Meta (rotan) | **UNVERIFIED** (documentación Meta) | **Exigir HMAC** (M2.1, ver `06`); no abrir más rutas |
+| Cloudflare R2 | Rails → R2 (S3 compatible) | `<account>.r2.cloudflarestorage.com` vía `STORAGE_ENDPOINT` (FACT: `config/storage.yml` `s3_compatible`) | endpoint exacto **UNVERIFIED** hasta ver el bucket real | Bucket/credenciales de **staging** aisladas para pruebas; no tocar el productivo |
+| WispHub | Sidekiq → API | FQDN **UNVERIFIED** (leer documentación oficial vigente) | read-only, token en secret store, rate limit y timeouts | Solo tras autorización escrita (M5) |
+| SmartOLT | Sidekiq → API | FQDN/subdominio de la cuenta **UNVERIFIED** | read-only (M6) | Idem |
+| SMTP Terranet | Rails → SMTP | host de Terranet | por definir | TLS |
+| DNS/NTP | contenedores | resolvers/NTP corporativos | — | Reloj coherente (firmas, URLs firmadas) |
 
-- **FACT:** `PushNotificationService#perform` hace por suscripción: `send_browser_push` (Web Push/VAPID propio), `send_fcm_push` (solo con Firebase propio) y `send_push_via_chatwoot_hub` (relay).
-- **INFERENCE:** las apps móviles oficiales de Chatwoot dependen del relay porque su proyecto Firebase es de Chatwoot; con `ENABLE_PUSH_RELAY_SERVER=false` y sin infraestructura propia **dejan de llegar las notificaciones push a las apps móviles oficiales**. Las notificaciones de navegador (Web Push) no dependen del relay (**UNVERIFIED** en runtime).
-- **DECISION propuesta:** `ENABLE_PUSH_RELAY_SERVER=false`; si Terranet necesita push móvil, evaluar app móvil propia + Firebase propio (alcance aparte) o aceptar solo web push. Registrar la decisión con el operador.
-
-## 6. Pendientes de M2 (no hechos)
-
-1. **Ping diario base (hallazgo 1/3):** decidir entre (a) bloqueo de red del FQDN (rompe sync de plan Enterprise, ver §7) o (b) parche T3 mínimo en `Internal::CheckNewVersionsJob` (`lib/`/`app/` MIT) que no llame al hub cuando una variable propia esté definida; **no tocar `enterprise/`**.
-2. Comprobar en runtime que, con el ping bloqueado/ausente, el job no deja errores ruidosos (`ExceptionList::REST_CLIENT_EXCEPTIONS` vs. `SocketError`) — **UNVERIFIED**.
-3. Probar `PushNotificationService` con suscripción FCM sintética y `ENABLE_PUSH_RELAY_SERVER=false`.
-4. Cobertura de frontend más amplia con DevTools (conversación abierta, ajustes, Help Center, widget, signup, Super Admin con `CHATWOOT_SUPPORT_*` vacío) y con `RAILS_ENV=production` (el job del ping solo corre así).
-5. Verificar que `mini-profiler` y herramientas de desarrollo **no** existan en producción.
-6. Política de egress por FQDN (proxy o `dns-sink` en producción) y prueba de no-egreso automatizable en CI (job que arranque el lab y falle si `dns-log` contiene `chatwoot.com` salvo lista permitida).
-7. Tests de regresión (RSpec) del parche T3 cuando se defina.
-8. Revisar de nuevo en cada upgrade: nuevos llamadores de `ChatwootHub`, nuevas constantes con URLs externas.
-
-## 6.1 Tabla de destinos (estado actual)
-
-| Destino | Estado propuesto | Motivo |
-|---|---|---|
-| `hub.2.chatwoot.com` (`/ping`, `/instances`, `/send_push`, `/events`, `/changelogs`, `/billing`) | **Bloquear** (condicional a decisión §7) | telemetría/relay/licencia |
-| `testimonials.cdn.chatwoot.com` | **Bloquear** | solo signup |
-| `www.chatwoot.com`, `status.chatwoot.com`, `chatwoot.help` | Permitir solo como **enlaces manuales** del navegador (sin tráfico automático) | docs/estado |
-| `github.com` | **Permitir solo en herramientas de desarrollo/release** (no runtime) | fetch upstream |
-| `www.gravatar.com` | **Bloquear** (+ `DISABLE_GRAVATAR=1`) | fuga de hash de email |
-| `www.google.com` (`/s2/favicons`) | **Bloquear** (o parche T3) | fuga de dominios de empresas de contactos |
-| `stun.l.google.com` | **Condicional** (solo si se usan llamadas Enterprise) | revela IP; no usado en MVP |
-| `graph.facebook.com` / dominios Meta WhatsApp | **Permitir** | canal oficial |
-| `*.r2.cloudflarestorage.com` / endpoint R2 del bucket Terranet | **Permitir** (bucket propio) | adjuntos |
-| SMTP de Terranet | **Permitir** | correo |
-| WispHub / SmartOLT (FQDN reales) | **No verificado** — añadir cuando exista autorización | M5/M6 |
-| Sentry/APM/analítica de terceros | **Bloquear** salvo decisión explícita | PII |
-| DNS/NTP | **Permitir** | infraestructura |
-
-## 7. ⚖ Decisión humana requerida: licencia vs. zero-egress
-
-- **Opción A (Enterprise con suscripción):** el ping diario a `hub.2.chatwoot.com` es parte del mecanismo de plan/licencia; mantenerlo permitido (solo ese FQDN, solo ese job) y minimizar datos con `DISABLE_TELEMETRY=true`. "Zero Chatwoot-owned telemetry" queda **parcialmente** cumplido: persiste identificador/versión/host.
-- **Opción B (edición solo MIT):** `DISABLE_ENTERPRISE=true` + parche T3 mínimo que omite el ping base ⇒ cero egress a Chatwoot en runtime. Se pierden las funciones Enterprise. Requiere confirmar con asesoría legal el uso de la edición MIT con el repositorio que contiene `enterprise/`.
-- **No se permite** simular respuestas del hub, escribir `INSTALLATION_PRICING_PLAN` a mano ni alterar gates `IS_ENTERPRISE`/`premium` (ver `docs/upstream/chatwoot-customizations.md`).
-
-## 8. Seguridad de WhatsApp Cloud (revisión parcial pedida en el prompt, §10–11)
-
-- **FACT:** `Webhooks::WhatsappController` aplica `verify_meta_signature!` a `process_payload` y usa `OpenSSL::HMAC` + `secure_compare` (`MetaTokenVerifyConcern`). Es correcto cuando se verifica.
-- **FACT / HALLAZGO:** la verificación es **condicional** (`whatsapp_controller.rb:45-52`): para un canal `whatsapp_cloud` **sin app secret por canal y que no sea `embedded_signup`**, `meta_signature_verification_required?` devuelve `false` y el webhook se acepta **sin firma**. Upstream lo prueba explícitamente (`spec/controllers/webhooks/whatsapp_controller_spec.rb:204`, *skips signature validation for manual whatsapp cloud channels without an app secret*). Es una decisión de compatibilidad de upstream, **no un bug oculto**, pero para Terranet (probable setup manual) implica que quien conozca el número y un `phone_number_id` podría forjar mensajes entrantes.
-- **FACT:** el secreto global `WHATSAPP_APP_SECRET` **no** activa la exigencia por sí solo en canales manuales: la exigencia depende de secretos del canal (`provider_config` claves `app_secret|app_secret_key|api_secret|client_secret`) o de `source == 'embedded_signup'`.
-- **DECISION propuesta:** (1) mitigación por configuración: guardar `app_secret` de la app de Meta en `provider_config` de cada canal manual (**UNVERIFIED** si la UI/API lo permite sin consola); (2) si no, parche T3 mínimo (TN-P04) para exigir firma cuando exista `WHATSAPP_APP_SECRET` global o una bandera propia, con spec en `spec/terranet/`; proponerlo también a upstream.
-- **FACT:** `provider_config` es `jsonb` en claro; solo `business_management_token` se cifra (`encrypts … if Chatwoot.encryption_configured?`, `app/models/channel/whatsapp.rb:31`). Tokens (`api_key`), `webhook_verify_token` y secretos de app quedan en claro en la DB y en sus backups. Los logs de parámetros filtran claves que contengan `secret`, `_key`, `token`, `access`, etc. (`config/initializers/filter_parameter_logging.rb`); la redacción en **respuestas JSON/serialización** y en Sentry **no se ha verificado** (UNVERIFIED).
-- **Pendiente:** tests de seguridad propios (firma ausente/ inválida/ válida; canal manual con y sin secreto; no fuga de `provider_config` en la API de inbox) — sin número real, con fixtures.
+## 12. Riesgos, impacto en upgrades y reversión
+- **Impacto en upgrades oficiales:** 3 archivos upstream tocados (`lib/chatwoot_hub.rb` +1 línea, `avatar_from_favicon_job.rb` +1 línea, `onboarding/index.html.erb` +4/−3) y 2 archivos nuevos bajo `lib/terranet/`. Riesgo de conflicto: **bajo**. Si upstream refactoriza `ChatwootHub` (nuevos métodos con red), el tripwire `privacy_spec.rb` y `audit-egress` lo detectan. Retirada: borrar `lib/terranet/`, la línea `prepend` y los dos guardas; los specs propios dejarían de aplicar.
+- **Funcionalidad afectada:** sin aviso de nueva versión (`LATEST_CHATWOOT_VERSION` nunca se escribe → no hay banner de actualización; las actualizaciones las gestiona Terranet), sin push móvil oficial (§9), sin avatares automáticos de Gravatar/favicon (se muestran iniciales).
+- **Reversión:** quitar `TERRANET_PRIVACY_MODE` (y `DISABLE_GRAVATAR`, borrando su fila de `installation_configs`) restaura el comportamiento upstream sin migraciones.
+- **Pendiente:** correr la suite completa; staging con proxy/DNS filtrante; imagen sin `enterprise/` (§7); prueba de push con dispositivo; cobertura del widget de chat y Help Center público.

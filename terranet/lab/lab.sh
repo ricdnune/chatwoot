@@ -2,6 +2,7 @@
 # Terranet lab helper. Run from anywhere: terranet/lab/lab.sh <command>
 set -euo pipefail
 cd "$(dirname "$0")"
+export COMPOSE_FILE="docker-compose.yml:docker-compose.ce-mask.yml"
 DC="docker compose"
 
 TEST_ENV=(-e RAILS_ENV=test -e POSTGRES_DATABASE=chatwoot_test -e REDIS_URL=redis://redis:6379/5)
@@ -123,6 +124,8 @@ case "${1:-help}" in
   # DISABLE_ENTERPRISE=true, so Enterprise mail views still render against a Community Account model.
   foss-check)
     shift   # optional rspec paths to run inside the stripped copy (test DB/Redis, hermetic env)
+    DC="docker compose -f docker-compose.yml"   # no CE view mask here: the copy has no enterprise/ at all
+    unset COMPOSE_FILE
     FOSS=$(mktemp -d -p "${LAB_TMPDIR:-${TMPDIR:-/tmp}}")
     # containers run as root, so the copy holds root-owned files (tmp/, public/vite-test): remove it through Docker
     trap 'docker run --rm -v "$FOSS:/cleanup" alpine sh -c "rm -rf /cleanup/* /cleanup/.[!.]*" >/dev/null 2>&1; rmdir "$FOSS" 2>/dev/null' EXIT

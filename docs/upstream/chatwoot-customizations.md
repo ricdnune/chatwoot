@@ -1,6 +1,6 @@
 # Registro de customizaciones Terranet sobre Chatwoot
 
-Base: `terranet/main` = tag `v4.19.1` (`caab07a8f00032d5205b5a5d7e2eb0ba2f3d2d82`), `VERSION_CW=4.19.1`.
+Base: `terranet/main` = tag `v4.19.1` (`caab07a8f00032d5205b5a5d7e2eb0ba2f3d2d82`), `VERSION_CW=4.19.1`. Edición: **Community (Camino B, decisión del propietario)** — nada bajo `enterprise/` se modifica ni se activa.
 Niveles: **T1** configuración · **T2** extensión modular (archivos nuevos) · **T3** parche mínimo a archivo upstream · **T4** divergencia profunda (prohibida salvo autorización).
 
 Regla de oro: si un cambio toca `enterprise/`, debe registrarse aquí con la marca **ENTERPRISE** y no se mergea sin decisión humana de licencia (ver `docs/terranet/00-repository-baseline.md` §5).
@@ -12,15 +12,21 @@ Regla de oro: si un cambio toca `enterprise/`, debe registrarse aquí con la mar
 | TN-001 | T2 | `terranet/lab/` (compose, `env.lab.example`, `lab.sh`, `dns-sink/`) | Laboratorio local aislado (M1), usa `docker/Dockerfile` oficial sin cambios | Terranet | Nulo: solo archivos nuevos | Smoke del lab (ver `01-local-development.md`) | Borrar el directorio |
 | TN-002 | T3 | `.dockerignore` (+2 líneas: `terranet/lab/.env`) | Evitar que el `.env` del lab entre en el contexto de build (`.dockerignore` oficial solo excluye `.env` en la raíz) | Terranet | Bajo: añadido al final; conflicto trivial | `docker build` + comprobar que `.env` no está en la imagen | Quitar las 2 líneas si el lab se mueve fuera del repo |
 | TN-003 | T2 | `docs/terranet/*`, `docs/upstream/*` | Documentación propia | Terranet | Nulo | — | Borrar |
+| TN-004 | T2 | `lib/terranet/privacy.rb`, `lib/terranet/chatwoot_hub_privacy.rb` | Modo de privacidad `TERRANET_PRIVACY_MODE`: corta toda llamada de `ChatwootHub` (ping, registro, push relay, eventos) | Terranet | Nulo (archivos nuevos) | `spec/lib/terranet/*`, `spec/jobs/internal/check_new_versions_job_privacy_spec.rb`, `./lab.sh audit-egress` | Borrar `lib/terranet/` + TN-005 |
+| TN-005 | **T3** | `lib/chatwoot_hub.rb` (+1 línea `prepend`) | Engancha TN-004. Archivo **MIT** | Terranet | **Bajo**: última línea del archivo; conflicto solo si upstream cambia el final de `ChatwootHub` | idem TN-004 (mutación: sin la línea fallan 6 ejemplos) | Quitar la línea si upstream ofrece un interruptor equivalente |
+| TN-006 | **T3** | `app/jobs/avatar/avatar_from_favicon_job.rb` (+1 línea) | No enviar dominios de empresas de contactos a `www.google.com/s2/favicons` | Terranet | Bajo | `spec/jobs/avatar/avatar_from_favicon_job_privacy_spec.rb` | Quitar la línea si upstream añade un interruptor |
+| TN-007 | **T3** | `app/views/installation/onboarding/index.html.erb` (casilla de suscripción oculta en modo privacidad, +4/−3) | La casilla viene **premarcada** y enviaba empresa/nombre/email del dueño al hub | Terranet | Bajo/medio: vista editable por upstream | `spec/controllers/installation/onboarding_controller_privacy_spec.rb` | Quitar el `unless` |
+| TN-008 | T2 | `spec/lib/terranet/`, `spec/jobs/**/*_privacy_spec.rb`, `spec/controllers/installation/onboarding_controller_privacy_spec.rb`, `spec/services/notification/push_notification_service_privacy_spec.rb`, `spec/controllers/webhooks/whatsapp_controller_hmac_spec.rb` | Regresión de privacidad y diagnóstico HMAC (sin editar specs upstream) | Terranet | Nulo | — | Borrar |
+| TN-009 | T2 | `terranet/lab/docker-compose.ce-mask.yml`, `terranet/lab/scripts/privacy_audit.rb`, `terranet/lab/lab.sh` (audit-egress, foss-check, tree check) | Laboratorio: auditoría de egress, copia sin `enterprise/`, máscara de vistas Enterprise (tmpfs, solo contenedor) | Terranet | Nulo | `lab.sh audit-egress`, `foss-check` | Borrar el directorio |
 
 ## Cambios previstos (aún NO implementados)
 
-| ID | Nivel | Rutas probables | Motivo | Notas de licencia |
+| ID | Nivel | Rutas probables | Motivo | Notas de licencia / estado |
 |---|---|---|---|---|
-| TN-P01 | T1 (+T3 si hace falta) | env `DISABLE_TELEMETRY`, `ENABLE_PUSH_RELAY_SERVER`; parche mínimo para llamadas del frontend a `hub.2.chatwoot.com` | M2 privacidad | Solo toca código MIT (`lib/chatwoot_hub.rb` es MIT; `enterprise/lib/enterprise/chatwoot_hub.rb` **no** se edita) |
-| TN-P02 | T1/T3 | `config/installation_config.yml`, `public/brand-assets/`, `public/manifest.json`, iconos, `vueapp.html.erb` | M3 branding | **LICENSE FLAG:** la edición de `custom_branding` en Super Admin es Enterprise; `disable_branding` es premium. Decisión humana pendiente (opción A licenciar / B edición MIT) |
-| TN-P03 | T2 | modelos/servicios/controladores/Vue nuevos bajo namespace `Terranet::` / `terranet/` | M4+ contexto ISP | Solo MIT; sin copiar código de `enterprise/` |
-| TN-P04 | T3 | `app/controllers/webhooks/whatsapp_controller.rb`, `app/controllers/concerns/meta_token_verify_concern.rb` | Cerrar HMAC condicional de Meta (ver `03-privacy-egress-audit.md` §6) | Código MIT; proponer también a upstream |
+| TN-P02 | T1/T3 | `public/brand-assets/*` (mismos nombres), `public/*.png`, `public/manifest.json`, `config/installation_config.yml`, `vueapp.html.erb`, `tailwind.config.js` | M3 branding | **Solo archivos MIT.** No se usa `custom_branding` de Enterprise ni se quita "Powered by" sin visto bueno legal. Bloqueado por falta de activos oficiales (ver `02`) |
+| TN-P03 | T2 | namespace `Terranet::` / `terranet/` (modelos, servicios, controladores, Vue) | M4+ contexto ISP | Solo MIT; sin copiar código de `enterprise/` |
+| TN-P04 (M2.1) | T3 | `app/controllers/webhooks/whatsapp_controller.rb`, `app/controllers/concerns/meta_token_verify_concern.rb` (vía `prepend` en `lib/terranet/`), `app/views/api/v1/models/_inbox.json.jbuilder` | Exigir HMAC en canales manuales; redactar `provider_config` | Ver `docs/terranet/06-whatsapp-hmac-diagnosis.md`; proponer también a upstream |
+| TN-P05 | build | Dockerfile/contexto de build de producción **sin `enterprise/` ni `spec/enterprise/`** | Camino B: correos Community correctos y sin código Enterprise en los nodos | Ver `03` §7; no modifica fuentes |
 
 ## Procedimiento de actualización (resumen)
 

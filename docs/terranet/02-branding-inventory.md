@@ -1,4 +1,4 @@
-# 02 — Inventario de branding (M3 preparatorio; no se ha modificado ningún activo ni código)
+# 02 — Inventario de branding (M3 preparatorio; no se ha modificado ningún activo ni código de branding)
 
 Convención: **FACT** (verificado) · **INFERENCE** · **DECISION**. Base: `terranet/main` = `v4.19.1`.
 
@@ -66,12 +66,37 @@ Criterios de aceptación de M3: capturas en claro/oscuro, móvil/escritorio; con
 ## 4. Lo que NO se hace
 - No se reemplaza "Chatwoot" por búsqueda global. No se generan logos. No se elimina el copyright ni los avisos de licencia.
 
-## 5. ⚖ LICENSE FLAGS del branding (decisión humana pendiente)
+## 5. Licencia y edición (actualizado en M2: **Camino B = Community/MIT, decisión del propietario**)
 
-1. **FACT:** en la edición comunitaria el Super Admin **no** ofrece la sección `custom_branding` (`app/controllers/super_admin/app_configs_controller.rb:59-80`); solo la ofrece el módulo Enterprise y únicamente con `pricing_plan != 'community'` (`enterprise/app/controllers/enterprise/super_admin/app_configs_controller.rb`).
-2. **FACT:** `disable_branding` (quitar "Powered by Chatwoot" en widget/Help Center) es `premium: true` (`config/features.yml`).
-3. **Por tanto:** escribir directamente filas de `installation_configs` por consola/seed para esquivar el candado de la UI **no se hará** sin decisión explícita: sería eludir un control de licencia premium.
-4. Caminos legítimos a decidir:
-   - **(A)** Adquirir la licencia/suscripción aplicable y usar `custom_branding` + `disable_branding` tal como están.
-   - **(B)** Edición **solo MIT**: `DISABLE_ENTERPRISE=true` (interruptor oficial, `lib/chatwoot_app.rb:15`) y personalizar **archivos MIT** (valores por defecto en `installation_config.yml`, `public/`, layouts, Tailwind). *Pendiente de confirmar con asesoría legal* si el esquema "powered by" y las marcas permiten esa variante; la funcionalidad Enterprise (Captain, audit logs, SLA, custom roles…) quedaría desactivada.
-5. Quitar branding visual permitido **no** equivale a retirar copyright/licencia. Marcas registradas de Chatwoot: investigación separada pendiente.
+1. **FACT:** en Community el Super Admin **no** ofrece `custom_branding` (`app/controllers/super_admin/app_configs_controller.rb:2-3,59-80`: `GENERAL_CONFIGS` = `ENABLE_ACCOUNT_SIGNUP, FIREBASE_*, WEBHOOK_TIMEOUT, MAXIMUM_FILE_UPLOAD_SIZE, WIDGET_TOKEN_EXPIRY`). Esa sección existe solo en `enterprise/app/controllers/enterprise/super_admin/app_configs_controller.rb`, con `pricing_plan != 'community'`. **No se copia ni se usa esa implementación.**
+2. **FACT:** `disable_branding` ("Powered by Chatwoot" en widget/Help Center) es `premium: true`. En Community **permanece visible**; quitarlo implicaría editar vistas MIT (`widgets/show.html.erb`, footers de portal, `Branding.vue`): **no se hará sin visto bueno legal** (atribución/marca).
+3. **FACT:** los valores `LOGO`, `LOGO_DARK`, `LOGO_THUMBNAIL`, `INSTALLATION_NAME`, `BRAND_*`, `*_URL`, `DISPLAY_MANIFEST` viajan al frontend desde `DashboardController` (`app/controllers/dashboard_controller.rb:5-15`) leyendo `GlobalConfig` (Redis → tabla `installation_configs`).
+4. Atribución/avisos: se conservan `LICENSE`, `enterprise/LICENSE` (mientras el directorio exista), copyright y notices. Retirar branding visual permitido no equivale a retirar copyright. Marcas registradas de Chatwoot: investigación aún pendiente.
+
+## 6. Cómo personalizar desde Community (plan; **nada implementado**)
+
+| Elemento | Mecanismo Community (MIT) | Cambio | Nivel | Observaciones |
+|---|---|---|---|---|
+| Logo login/dashboard/emails/Super Admin | Reemplazar `public/brand-assets/logo.svg`, `logo_dark.svg`, `logo_thumbnail.svg` **manteniendo los nombres**: los valores por defecto de `LOGO*` ya apuntan a esas rutas, así que no hace falta tocar la DB ni la configuración | archivos estáticos | T3 (assets) | Requiere SVG oficial (hoy solo hay PNG raster); `app/views/super_admin/application/_brand.html.erb` usa la ruta fija `/brand-assets/logo_thumbnail.svg` |
+| Favicon / ícono PWA | `vueapp.html.erb:29-34` usa `favicon-{16,32,96}.png`, `rel=icon 512x512` con **`LOGO_THUMBNAIL`** (un SVG servido como ícono PNG: hallazgo menor upstream), `manifest.json`, `android-icon-*`, `apple-icon-*`, `ms-icon-*`, `favicon-badge-*` | regenerar el conjunto de PNG desde el isotipo oficial; editar `manifest.json` (`name`, `short_name`, colores) | T3 | `apple-touch-icon.png` está vacío (0 B) en upstream |
+| Nombre de instalación, `BRAND_NAME`, `BRAND_URL`, `WIDGET_BRAND_URL`, `TERMS_URL`, `PRIVACY_URL` | Se leen de `installation_configs`. Community no da UI. Opciones: **(i)** cambiar los valores por defecto en `config/installation_config.yml` (solo siembra instalaciones nuevas o claves ausentes: `ConfigLoader` con `reconcile_only_new: true`); **(ii)** una tarea Rake propia que actualice **solo** esas filas en una instalación existente | (i) T3 en archivo MIT; (ii) T2 (`lib/tasks/terranet/`) | **Decisión/legal pendiente para (ii)**: es escritura de datos de configuración que Community no expone por UI; no cruza ningún gate de código MIT, pero conviene aprobación explícita del propietario/asesor antes de M3. **No usar** `ConfigLoader.process(reconcile_only_new: false)`: sobrescribiría *todas* las configs con valores por defecto |
+| Emails (encabezado, pie, remitente) | `app/views/layouts/mailer/base.liquid` usa `BRAND_NAME`/`BRAND_URL`; remitente `MAILER_SENDER_EMAIL` (env); plantillas `app/views/mailers/**`, `devise/mailer/**` | env + edición de plantillas MIT | T1/T3 | En producción Community (artefacto sin `enterprise/`) se usan las vistas OSS (ver `03` §7) |
+| Colores y tipografía | `tailwind.config.js` (+ `theme/`) | tokens de color Terranet | T3 | Pendiente de paleta oficial |
+| Textos "Chatwoot" en la UI | 54 apariciones en `i18n/locale/en/*.json`; `shared/composables/useBranding.js` (`replaceInstallationName`) sustituye por `INSTALLATION_NAME` en algunos textos | usar el helper; cambios de cadenas solo en `en.json` (política del repo) | T3 | ES-EC: no existe `es_EC` (solo `es`); decisión pendiente |
+| Páginas de error | `public/404.html`, `422.html`, `500.html` (sin la palabra "Chatwoot" según grep) | estilo/logo | T3 | |
+| Widget de chat | color y textos por inbox (configurable en UI); "Powered by" ver §5.2 | — | T1 | |
+| Help Center | tema por portal (UI); footer "Powered by" ver §5.2 | — | T1 | |
+
+## 7. Activos: especificación y estado
+
+Referencia **provisional** (no integrar): `~/Projects/terranet-gpon-olt/brand/terranet-logo-original.png` — 793×265 px, RGBA con **fondo blanco opaco**, colores medidos `#2D2DBA` (índigo) y `#0098F7` (azul). No se reemplaza por reconstrucciones ni por el PNG recoloreado (`terranet-logo.png`, 1000×282, `#2955A1`/`#06A8FD`) hasta validación de Terranet. **Ningún archivo de marca fue copiado al repositorio.**
+
+| Activo requerido | Formato | Tamaño/uso | Estado |
+|---|---|---|---|
+| `logo.svg` (tema claro) | SVG vectorial oficial | login, dashboard, emails; ancho de lectura ≥ 160 px | **Falta** |
+| `logo_dark.svg` | SVG (variante para fondo oscuro) | modo oscuro | **Falta** |
+| `logo_thumbnail.svg` + PNG 512×512 | isotipo cuadrado transparente | favicon, PWA, avatar | **Falta** |
+| Conjunto PNG | 16/32/96/512 (favicon), 36–192 (android), 57–180 (apple), 70/144/150/310 (ms), `favicon-badge` 16/32/96 | `public/` | se genera del isotipo |
+| Paleta / tipografía / guía de uso | HEX/Pantone, familia, márgenes mínimos | Tailwind, emails | **Falta** |
+
+Ubicación de assets en el repo: `public/brand-assets/` (logos), `public/*.png|*.ico` (iconos), `public/manifest.json` (PWA).
