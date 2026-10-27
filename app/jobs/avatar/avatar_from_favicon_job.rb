@@ -2,6 +2,7 @@ class Avatar::AvatarFromFaviconJob < ApplicationJob
   queue_as :purgable
 
   def perform(company)
+    return if Terranet::Privacy.enabled?
     return if company.domain.blank?
     return if company.avatar.attached?
 

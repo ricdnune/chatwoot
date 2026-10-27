@@ -131,3 +131,4 @@ class ChatwootHub
 end
 
 ChatwootHub.singleton_class.prepend_mod_with('ChatwootHub')
+ChatwootHub.singleton_class.prepend(Terranet::ChatwootHubPrivacy)

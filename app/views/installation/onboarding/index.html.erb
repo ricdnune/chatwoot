@@ -20,10 +20,12 @@
       <%= password_field :user, :password, placeholder: t("installation.onboarding.password_placeholder"), required: true, class: ui(:input, "mt-1 min-h-10") %>
     </div>
 
-    <label class="flex items-start gap-2 text-body-main" for="subscribe_to_updates">
-      <%= check_box_tag "subscribe_to_updates", 'true', true, class: ui(:checkbox, "mt-0.5") %>
-      <%= t("installation.onboarding.subscribe") %>
-    </label>
+    <% unless Terranet::Privacy.enabled? %>
+      <label class="flex items-start gap-2 text-body-main" for="subscribe_to_updates">
+        <%= check_box_tag "subscribe_to_updates", 'true', true, class: ui(:checkbox, "mt-0.5") %>
+        <%= t("installation.onboarding.subscribe") %>
+      </label>
+    <% end %>
 
     <%= render "super_admin/application/button", label: t("installation.onboarding.submit"), type: "submit", extra: "h-10 w-full" %>
   <% end %>
