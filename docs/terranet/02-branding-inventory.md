@@ -73,7 +73,7 @@ Criterios de aceptación de M3: capturas en claro/oscuro, móvil/escritorio; con
 3. **FACT:** los valores `LOGO`, `LOGO_DARK`, `LOGO_THUMBNAIL`, `INSTALLATION_NAME`, `BRAND_*`, `*_URL`, `DISPLAY_MANIFEST` viajan al frontend desde `DashboardController` (`app/controllers/dashboard_controller.rb:5-15`) leyendo `GlobalConfig` (Redis → tabla `installation_configs`).
 4. Atribución/avisos: se conservan `LICENSE`, `enterprise/LICENSE` (mientras el directorio exista), copyright y notices. Retirar branding visual permitido no equivale a retirar copyright. Marcas registradas de Chatwoot: investigación aún pendiente.
 
-## 6. Cómo personalizar desde Community (plan; **nada implementado**)
+## 6. Cómo personalizar desde Community (plan; **M3.1 ya implementó logo, nombre, iconos, Super Admin y la tarea idempotente: ver `10-branding-m3-1-changelog.md`**)
 
 | Elemento | Mecanismo Community (MIT) | Cambio | Nivel | Observaciones |
 |---|---|---|---|---|
