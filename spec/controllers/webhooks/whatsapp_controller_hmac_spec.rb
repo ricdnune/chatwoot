@@ -1,7 +1,7 @@
 require 'rails_helper'
 
-# Terranet M2 diagnostic (see docs/terranet/06-whatsapp-hmac-diagnosis.md). Synthetic signatures only; no Meta traffic.
-# Examples tagged "CURRENT" pin today's upstream behaviour so a future change (ours in M2.1, or upstream's) is noticed.
+# Terranet M2.1 (see docs/terranet/06-whatsapp-hmac-diagnosis.md). Synthetic signatures only; no Meta traffic.
+# Signature verification is mandatory for every whatsapp_cloud channel (lib/terranet/whatsapp_signature_policy.rb).
 RSpec.describe 'Webhooks::WhatsappController HMAC verification', type: :request do
   let(:channel) { create(:channel_whatsapp, provider: 'whatsapp_cloud', sync_templates: false, validate_provider_config: false) }
   let(:channel_secret) { 'synthetic-channel-app-secret' }
@@ -65,7 +65,7 @@ RSpec.describe 'Webhooks::WhatsappController HMAC verification', type: :request 
     end
   end
 
-  context 'when a manual cloud channel has no app secret (the Terranet risk)' do
+  context 'when a manual cloud channel has no per-channel app secret (the case upstream skips)' do
     # The factory adds secret/source keys; strip them to mirror a channel created by Whatsapp::ManualSetupService.
     before do
       channel.update!(
@@ -74,33 +74,57 @@ RSpec.describe 'Webhooks::WhatsappController HMAC verification', type: :request 
       )
     end
 
-    it 'CURRENT: accepts an unsigned payload' do
+    it 'rejects an unsigned payload and logs an actionable error when no secret exists anywhere' do
+      allow(Rails.logger).to receive(:error)
+
       post_webhook(body)
+
+      expect(response).to have_http_status(:unauthorized)
+      expect(Webhooks::WhatsappEventsJob).not_to have_received(:perform_later)
+      expect(Rails.logger).to have_received(:error).with(/no Meta app secret configured/)
+    end
+
+    it 'rejects an unsigned payload when only the global app secret exists' do
+      post_webhook(body, env: { WHATSAPP_APP_SECRET: global_secret })
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'rejects a forged signature when only the global app secret exists' do
+      post_webhook(body, signature: signature_for(body, 'attacker-guess'), env: { WHATSAPP_APP_SECRET: global_secret })
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'accepts a payload signed with the global Meta app secret (single Meta app, the Terranet setup)' do
+      post_webhook(body, signature: signature_for(body, global_secret), env: { WHATSAPP_APP_SECRET: global_secret })
 
       expect(response).to have_http_status(:success)
       expect(Webhooks::WhatsappEventsJob).to have_received(:perform_later)
     end
 
-    it 'CURRENT: accepts an unsigned payload even when WHATSAPP_APP_SECRET is configured globally' do
-      post_webhook(body, env: { WHATSAPP_APP_SECRET: global_secret })
-
-      expect(response).to have_http_status(:success)
-    end
-
-    it 'CURRENT: accepts a payload carrying a forged signature' do
-      post_webhook(body, signature: signature_for(body, 'attacker-guess'), env: { WHATSAPP_APP_SECRET: global_secret })
-
-      # With the global secret configured the forged value is checked, and since the channel has no secret of its own the
-      # verification is skipped entirely; a wrong signature is therefore not rejected for this channel type.
-      expect(response).to have_http_status(:success)
-    end
-
-    it 'TARGET (M2.1): rejects an unsigned payload when a global app secret is configured' do
-      pending 'M2.1: signature verification is skipped for manual cloud channels without a per-channel secret'
-
-      post_webhook(body, env: { WHATSAPP_APP_SECRET: global_secret })
+    it 'rejects a body modified after signing with the global secret' do
+      post_webhook(body.sub('"entry"', '"entry" '), signature: signature_for(body, global_secret), env: { WHATSAPP_APP_SECRET: global_secret })
 
       expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'ROLLBACK (lab/staging only): TERRANET_WHATSAPP_REQUIRE_SIGNATURE=false restores the upstream behaviour' do
+      post_webhook(body, env: { TERRANET_WHATSAPP_REQUIRE_SIGNATURE: 'false' })
+
+      expect(response).to have_http_status(:success)
+    end
+  end
+
+  context 'when the channel uses another provider' do
+    it 'keeps skipping verification for 360dialog channels (upstream behaviour)' do
+      dialog = create(:channel_whatsapp, provider: 'default', sync_templates: false, validate_provider_config: false)
+
+      with_modified_env(WHATSAPP_APP_SECRET: global_secret) do
+        post "/webhooks/whatsapp/#{dialog.phone_number}", params: { content: 'hello' }.to_json, headers: { 'CONTENT_TYPE' => 'application/json' }
+      end
+
+      expect(response).to have_http_status(:success)
     end
   end
 

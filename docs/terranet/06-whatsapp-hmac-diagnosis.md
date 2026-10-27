@@ -39,30 +39,30 @@ Convención: **FACT** (código/ejecución) · **INFERENCE** · **UNVERIFIED**.
 6. **No romper WhatsApp**: probar con tráfico sintético firmado y, solo con autorización, con un número de pruebas de Meta en staging aislado.
 
 ## 4. Pruebas (sintéticas) — `spec/controllers/webhooks/whatsapp_controller_hmac_spec.rb`
-`./lab.sh rspec spec/controllers/webhooks/whatsapp_controller_hmac_spec.rb` → **11 ejemplos, 0 fallos, 1 pendiente (esperado)**.
+**M2.1 implementado en la rama `terranet/feature/m2-1-whatsapp-hmac` (solo laboratorio; no desplegado).** `./lab.sh rspec spec/controllers/webhooks spec/services/whatsapp spec/models/channel/whatsapp_spec.rb spec/lib/terranet` → **516 ejemplos, 0 fallos**; el spec HMAC: **14 ejemplos, 0 fallos**. Prueba de mutación: sin el `prepend` fallan **4** ejemplos; restaurado, 0.
 
-| Caso | Resultado |
+| Caso | Resultado con M2.1 |
 |---|---|
-| Canal con secreto + firma válida sobre cuerpo crudo | 200, job encolado |
-| Cuerpo alterado tras firmar | 401, sin job |
-| Firma con otro secreto | 401 |
-| Firma ausente | 401 |
-| Firma sin prefijo `sha256=` | 401 |
-| **CURRENT** — canal manual sin secreto, sin firma | **200 (aceptado)** |
-| **CURRENT** — igual con `WHATSAPP_APP_SECRET` global | **200 (aceptado)** |
-| **CURRENT** — igual con firma **falsa** | **200 (aceptado)** |
-| **TARGET (M2.1)** — rechazar sin firma si hay secreto global | *pending* (falla hoy como se espera; si deja de fallar RSpec lo avisa) |
-| **CURRENT** — API de inbox devuelve `api_key` y `app_secret` a administradores | confirmado |
-| Agentes no reciben `provider_config` | confirmado |
+| Canal con secreto propio + firma válida sobre cuerpo crudo | 200, job encolado |
+| Cuerpo alterado tras firmar / otro secreto / firma ausente / sin prefijo `sha256=` | 401 |
+| **Canal manual sin secreto propio, sin firma, sin ningún secreto configurado** | **401** + log accionable `no Meta app secret configured` |
+| Canal manual, sin firma, con `WHATSAPP_APP_SECRET` global | **401** (antes 200) |
+| Canal manual, firma **falsa**, con secreto global | **401** (antes 200) |
+| Canal manual firmado con el secreto global (una sola app de Meta, caso Terranet) | 200 |
+| Canal manual, cuerpo alterado tras firmar con el secreto global | 401 |
+| `TERRANET_WHATSAPP_REQUIRE_SIGNATURE=false` (**rollback solo lab/staging**) | restaura el comportamiento upstream (200 sin firma) |
+| Canal 360dialog (otro proveedor) | sin cambios (200 sin firma) |
+| API de inbox devuelve `api_key` y `app_secret` a administradores / no a agentes | confirmado (sin cambios; ver §7) |
 
-Los ejemplos "CURRENT" fijan el comportamiento actual para detectar cambios (nuestros o de upstream); **no** significan que sea deseable.
+**Specs upstream:** de los specs existentes solo **uno** contradice el endurecimiento por diseño —`spec/controllers/webhooks/whatsapp_controller_spec.rb:204` *skips signature validation for manual whatsapp cloud channels without an app secret*—; no se edita ni se borra: `spec/support/terranet/whatsapp_upstream_compat.rb` lo ejecuta en modo compatibilidad upstream (rollback activo solo para ese ejemplo). Los demás ejemplos upstream de webhooks pasan sin cambios (embedded signup, secreto de canal, secreto global sin canal, 360dialog, números inactivos).
 
-## 5. Plan de mitigación **sin parche** (disponible hoy)
-Solo aplicable con autorización y en staging: añadir el `app_secret` de la app de Meta de Terranet al `provider_config` de cada canal manual (vía consola o `PATCH` completo preservando las demás claves) y validar con un payload firmado de Meta. **UNVERIFIED** que la UI lo permita; hacerlo en producción es un cambio de configuración productivo → requiere aprobación y ventana.
+## 5. Mitigación sin parche (descartada como solución final)
+Añadir el `app_secret` al `provider_config` de cada canal manual por consola/PATCH completo es frágil (sin campo en la UI, reemplazo total del hash). M2.1 hace que el secreto global de la app de Meta basta para los canales manuales.
 
 ## 6. Qué NO se hizo
-Sin parche, sin cambios de configuración, sin tocar webhooks de Meta, sin número real, sin acceso a PVE01/PVE02.
+Sin cambios de configuración en producción, sin tocar webhooks de Meta, sin número real, sin acceso a PVE01/PVE02, **sin desplegar**.
 
-## 7. Propuesta de misión M2.1 (separada)
-**Alcance:** (1) parche T3 mínimo en `MetaTokenVerifyConcern`/`WhatsappController` (módulo `prepend` propio en `lib/terranet/`) que exija firma para todo `whatsapp_cloud` cuando exista un secreto utilizable (canal o global) y rechace con log accionable cuando no exista, tras una bandera `TERRANET_WHATSAPP_REQUIRE_SIGNATURE`; (2) redactar `provider_config` sensible en `_inbox.json.jbuilder` para administradores (booleanos `*_configured`); (3) cifrado de `provider_config` sensible (migración de datos con ensayo en DB sintética); (4) propuesta del cambio a upstream.
-**Criterios de aceptación:** los 11 ejemplos de §4 pasan con el target activado (el `pending` se vuelve verde y se convierte en ejemplo normal); canales embedded y con secreto siguen funcionando; test de "configuración incompleta → 401 + log"; pruebas con firmas sintéticas de Meta; sin cambios en producción hasta aprobación humana y plan de rollback (apagar la bandera).
+## 7. Implementación (M2.1) y trabajo pendiente (M2.2)
+**Implementado (T2 + 1 inicializador, sin editar archivos upstream de producción):** `lib/terranet/whatsapp.rb` (bandera segura por defecto), `lib/terranet/whatsapp_signature_policy.rb` (`prepend` sobre `Webhooks::WhatsappController`: firma obligatoria para todo `whatsapp_cloud`; sin secreto utilizable ⇒ rechazo con log; el HMAC y la comparación en tiempo constante son los de upstream), `config/initializers/terranet_whatsapp_signature.rb` (`to_prepare`).
+**Requisito operativo antes de usar Meta en un despliegue nuevo:** configurar `WHATSAPP_APP_SECRET` (Super Admin → página `whatsapp_embedded`, disponible en Community) o `app_secret` por canal, **antes** de apuntar el webhook de Meta; de lo contrario el canal manual devolverá 401 por diseño. Validar en staging con payloads sintéticos firmados y, con autorización, un número de pruebas de Meta.
+**Pendiente M2.2 (no incluido aquí):** (a) redactar `provider_config` en `_inbox.json.jbuilder` para administradores (la UI de edición de canal puede depender de esos valores → requiere análisis del frontend), (b) cifrado en reposo de `api_key`/`webhook_verify_token`/`app_secret` con migración de datos ensayada en DB sintética, (c) comparación en tiempo constante del `webhook_verify_token`, (d) rotación de secretos, (e) revisión de logs/backups, (f) proponer el cambio a upstream. **Aceptación M2.1:** los 14 ejemplos del spec HMAC verdes con el modo seguro como predeterminado (✔ en lab); canales embedded y con secreto siguen funcionando (✔); rollback documentado (✔).
