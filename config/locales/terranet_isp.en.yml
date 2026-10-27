@@ -1,0 +1,105 @@
+en:
+  terranet_isp:
+    nav:
+      label: Terranet ISP
+    title: Terranet ISP
+    description: Provider connections, subscriber identity and audit trail. In this lab build every connection is simulated.
+    account: Account
+    switch: Switch
+    tabs:
+      general: General
+      wisphub: WispHub
+      smartolt: SmartOLT
+      identity: Identity
+      audit: Audit
+    mode:
+      label: Mode
+      mock: Simulated (local mock)
+      live: Live
+      mock_note: No real provider is contacted. Connection tests only reach the local mock server.
+      live_note: LIVE mode is enabled. Only approved, read-only calls are allowed.
+    general:
+      version: Terranet ISP version
+      privacy: Chatwoot telemetry
+      privacy_on: Disabled (privacy mode)
+      privacy_off: Not disabled
+      encryption: Credential encryption
+      encryption_ok: Configured
+      encryption_missing: Not configured - credentials cannot be saved or used
+      providers: Providers
+      pending: Identity candidates awaiting a human decision
+      last_test: Last test
+      never: Never
+      no_accounts: Create an account first. Provider settings are stored per account.
+    status:
+      not_configured: Not configured
+      configured: Configured (not tested)
+      connected: Connected
+      error: Error
+    provider:
+      environment: Environment
+      sandbox: Sandbox
+      production: Production
+      subdomain: SmartOLT subdomain
+      subdomain_help: Only the name before .smartolt.com (letters, digits and hyphens). It is never used as a URL.
+      credential: Credential
+      credential_status: Credential status
+      credential_set: Stored encrypted. It is never shown again.
+      credential_unset: No credential stored.
+      secret_label_wisphub: New Api-Key
+      secret_label_smartolt: New X-Token
+      secret_placeholder: Paste a new value (the stored one cannot be displayed)
+      set: Save credential
+      rotate: Rotate credential
+      rotated: Last rotation
+      rotated_by: Rotated by
+      settings: Settings
+      save_settings: Save settings
+      test: Test connection
+      test_note: Sends one read-only request to the local mock server and records latency and result.
+      last_check: Last check
+      latency: Latency
+      error_code: Result
+      history: Recent checks
+      no_history: No checks yet.
+      switch_note: Changing the environment removes the stored credential (each environment has its own).
+      encryption_blocked: "Encryption keys are missing: this form is disabled."
+      wisphub_note: Read-only. Use a dedicated WispHub staff user with read permissions only.
+      smartolt_note: Read-only. Optical signal is only requested on demand, never polled.
+    identity:
+      note: Synthetic lab data. Nothing here is linked to a real subscriber, and nothing is confirmed automatically.
+      contact: Contact
+      service: WispHub service
+      onu: SmartOLT ONU
+      matched_by: Matched by
+      status: Status
+      decision: Decision
+      reason: Reason
+      confirm: Confirm
+      reject: Reject
+      revoke: Revoke
+      empty: No candidates. Run the lab seed task to create synthetic ones.
+      reasons:
+        verified_with_subscriber: Verified with the subscriber
+        verified_by_document: Verified by document
+        data_mismatch: Data mismatch
+        duplicate_service: Duplicate service
+        other: Other
+    audit:
+      when: When
+      who: Actor
+      action: Action
+      outcome: Outcome
+      details: Details
+      empty: No audit events yet.
+      note: Configuration, tests and decisions. Secrets, HTTP bodies and subscriber data are never recorded.
+    flash:
+      settings_saved: Settings saved.
+      settings_invalid: Settings could not be saved.
+      secret_saved: Credential stored encrypted.
+      secret_invalid: The credential was rejected. Use 8-512 printable characters with no spaces.
+      encryption_missing: Encryption keys are not configured. Nothing was stored.
+      check_ok: Connection test succeeded (simulated).
+      check_failed: Connection test failed. See the result on this page.
+      decision_saved: Decision recorded.
+      decision_invalid: That decision is not allowed.

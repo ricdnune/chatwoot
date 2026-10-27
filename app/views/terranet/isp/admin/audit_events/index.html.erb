@@ -1,0 +1,32 @@
+<%= render 'terranet/isp/admin/shared/header', account: @account, active: :audit %>
+<div class="space-y-4">
+  <p class="text-body-main text-n-slate-11"><%= t('terranet_isp.audit.note') %></p>
+  <%= render 'card', title: t('terranet_isp.tabs.audit'), count: @events.size do %>
+    <% if @events.empty? %>
+      <p class="px-5 py-4 text-body-main text-n-slate-11"><%= t('terranet_isp.audit.empty') %></p>
+    <% else %>
+      <div class="overflow-x-auto">
+        <table class="w-full text-body-main">
+          <thead>
+            <tr class="border-b border-n-weak text-label-small text-n-slate-11">
+              <% %w[when who action outcome details].each do |column| %>
+                <th class="px-4 py-2 text-start font-medium"><%= t("terranet_isp.audit.#{column}") %></th>
+              <% end %>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-n-weak">
+            <% @events.each do |event| %>
+              <tr>
+                <td class="whitespace-nowrap px-4 py-2.5 text-n-slate-11"><%= l(event.created_at, format: :short) %></td>
+                <td class="px-4 py-2.5 text-n-slate-12"><%= @actors[event.actor_id] || '-' %></td>
+                <td class="px-4 py-2.5 font-mono text-xs text-n-slate-12"><%= event.action %></td>
+                <td class="px-4 py-2.5"><%= render 'badge', label: event.outcome, tone: { 'success' => :success, 'failure' => :danger, 'denied' => :warning }.fetch(event.outcome) %></td>
+                <td class="px-4 py-2.5 font-mono text-xs text-n-slate-11"><%= event.metadata.map { |k, v| "#{k}=#{v}" }.join(' ') %></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      </div>
+    <% end %>
+  <% end %>
+</div>

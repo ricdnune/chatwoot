@@ -1,0 +1,57 @@
+<%= render 'terranet/isp/admin/shared/header', account: @account, active: :general %>
+<% encryption_ok = Terranet::Isp.encryption_configured? %>
+<% live = Terranet::Isp.mode == :live %>
+
+<div class="space-y-6">
+  <div class="rounded-lg border border-n-blue-6 bg-n-blue-2 px-3.5 py-2.5 text-body-main text-n-blue-12">
+    <%= t(live ? 'terranet_isp.mode.live_note' : 'terranet_isp.mode.mock_note') %>
+  </div>
+
+  <%= render 'card', title: t('terranet_isp.tabs.general') do %>
+    <dl class="divide-y divide-n-weak">
+      <% [
+           [t('terranet_isp.general.version'), render('badge', label: Terranet::Isp::VERSION, tone: :neutral)],
+           [t('terranet_isp.mode.label'), render('badge', label: t("terranet_isp.mode.#{Terranet::Isp.mode}"), tone: (live ? :warning : :info))],
+           [t('terranet_isp.general.privacy'), render('badge', label: t(Terranet::Privacy.enabled? ? 'terranet_isp.general.privacy_on' : 'terranet_isp.general.privacy_off'), tone: (Terranet::Privacy.enabled? ? :success : :warning))],
+           [t('terranet_isp.general.encryption'), render('badge', label: t(encryption_ok ? 'terranet_isp.general.encryption_ok' : 'terranet_isp.general.encryption_missing'), tone: (encryption_ok ? :success : :danger))],
+           [t('terranet_isp.general.pending'), render('badge', label: @candidates_pending.to_s, tone: (@candidates_pending.positive? ? :warning : :neutral))]
+         ].each do |label, value| %>
+        <div class="grid gap-x-8 gap-y-1 px-5 py-3 sm:grid-cols-[16rem_minmax(0,1fr)]">
+          <dt class="text-label text-n-slate-12"><%= label %></dt>
+          <dd class="text-body-main text-n-slate-12"><%= value %></dd>
+        </div>
+      <% end %>
+    </dl>
+  <% end %>
+
+  <%= render 'card', title: t('terranet_isp.general.providers') do %>
+    <div class="overflow-x-auto">
+      <table class="w-full text-body-main">
+        <thead>
+          <tr class="border-b border-n-weak text-start text-label-small text-n-slate-11">
+            <th class="px-5 py-2 text-start font-medium"><%= t('terranet_isp.general.providers') %></th>
+            <th class="px-3 py-2 text-start font-medium"><%= t('terranet_isp.provider.environment') %></th>
+            <th class="px-3 py-2 text-start font-medium"><%= t('terranet_isp.provider.credential_status') %></th>
+            <th class="px-3 py-2 text-start font-medium"><%= t('terranet_isp.general.last_test') %></th>
+            <th class="px-3 py-2 text-start font-medium"><%= t('terranet_isp.provider.latency') %></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-n-weak">
+          <% Terranet::Isp::PROVIDERS.each do |provider| %>
+            <% credential = @credentials[provider] %>
+            <% status = credential&.status || 'not_configured' %>
+            <tr>
+              <td class="px-5 py-3 font-medium text-n-slate-12">
+                <%= link_to t("terranet_isp.tabs.#{provider}"), super_admin_terranet_isp_provider_path(account_id: @account.id, provider: provider), class: 'underline-offset-2 hover:underline' %>
+              </td>
+              <td class="px-3 py-3 text-n-slate-11"><%= credential ? t("terranet_isp.provider.#{credential.environment}") : '-' %></td>
+              <td class="px-3 py-3"><%= render 'badge', label: t("terranet_isp.status.#{status}"), tone: { 'connected' => :success, 'error' => :danger, 'configured' => :info }.fetch(status, :neutral) %></td>
+              <td class="px-3 py-3 text-n-slate-11"><%= credential&.last_checked_at ? l(credential.last_checked_at, format: :short) : t('terranet_isp.general.never') %></td>
+              <td class="px-3 py-3 tabular-nums text-n-slate-11"><%= credential&.last_latency_ms ? "#{credential.last_latency_ms} ms" : '-' %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  <% end %>
+</div>

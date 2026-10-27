@@ -1,0 +1,109 @@
+<%= render 'terranet/isp/admin/shared/header', account: @account, active: @provider.to_sym %>
+<% encryption_ok = Terranet::Isp.encryption_configured? %>
+<% status = @credential.status %>
+<% tones = { 'connected' => :success, 'error' => :danger, 'configured' => :info } %>
+<% settings_path = super_admin_terranet_isp_provider_path(account_id: @account.id, provider: @provider) %>
+
+<div class="space-y-6">
+  <p class="text-body-main text-n-slate-11"><%= t("terranet_isp.provider.#{@provider}_note") %></p>
+
+  <% unless encryption_ok %>
+    <%= render 'alert' do %><%= t('terranet_isp.provider.encryption_blocked') %><% end %>
+  <% end %>
+
+  <%= render 'card', title: t('terranet_isp.provider.settings') do %>
+    <%= form_with model: @credential, scope: :credential, url: settings_path, method: :patch do |f| %>
+      <div class="divide-y divide-n-weak">
+        <% if @provider == 'wisphub' %>
+          <div class="grid gap-x-8 gap-y-1.5 px-5 py-4 sm:grid-cols-[16rem_minmax(0,1fr)]">
+            <div class="text-label text-n-slate-12 sm:pt-1.5"><%= f.label :environment, t('terranet_isp.provider.environment') %>
+              <p class="mt-0.5 text-label-small text-n-slate-11"><%= t('terranet_isp.provider.switch_note') %></p></div>
+            <div class="max-w-2xl"><%= f.select :environment, Terranet::Isp::ProviderCredential::ENVIRONMENTS.map { |e| [t("terranet_isp.provider.#{e}"), e] }, {}, class: ui(:select) %></div>
+          </div>
+        <% else %>
+          <div class="grid gap-x-8 gap-y-1.5 px-5 py-4 sm:grid-cols-[16rem_minmax(0,1fr)]">
+            <div class="text-label text-n-slate-12 sm:pt-1.5"><%= f.label :subdomain, t('terranet_isp.provider.subdomain') %>
+              <p class="mt-0.5 text-label-small text-n-slate-11"><%= t('terranet_isp.provider.subdomain_help') %></p></div>
+            <div class="max-w-2xl">
+              <div class="flex items-center gap-2">
+                <%= f.text_field :subdomain, class: ui(:input), autocomplete: 'off', spellcheck: false, maxlength: 63, pattern: '[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?' %>
+                <span class="shrink-0 text-body-main text-n-slate-11">.smartolt.com</span>
+              </div>
+              <% @credential.errors.full_messages_for(:subdomain).each do |message| %>
+                <p class="mt-1 text-label-small text-n-ruby-11"><%= message %></p>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+        <div class="flex items-center gap-2 px-5 py-3">
+          <%= render 'button', label: t('terranet_isp.provider.save_settings'), submit: f %>
+        </div>
+      </div>
+    <% end %>
+  <% end %>
+
+  <%= render 'card', title: t('terranet_isp.provider.credential') do %>
+    <div class="divide-y divide-n-weak">
+      <div class="grid gap-x-8 gap-y-1 px-5 py-3 sm:grid-cols-[16rem_minmax(0,1fr)]">
+        <div class="text-label text-n-slate-12"><%= t('terranet_isp.provider.credential_status') %></div>
+        <div class="flex flex-wrap items-center gap-2 text-body-main text-n-slate-12">
+          <%= render 'badge', label: t("terranet_isp.status.#{status}"), tone: tones.fetch(status, :neutral) %>
+          <span class="text-n-slate-11"><%= t(@credential.secret_configured? ? 'terranet_isp.provider.credential_set' : 'terranet_isp.provider.credential_unset') %></span>
+        </div>
+      </div>
+      <% if @credential.rotated_at %>
+        <div class="grid gap-x-8 gap-y-1 px-5 py-3 sm:grid-cols-[16rem_minmax(0,1fr)]">
+          <div class="text-label text-n-slate-12"><%= t('terranet_isp.provider.rotated') %></div>
+          <div class="text-body-main text-n-slate-12"><%= l(@credential.rotated_at, format: :short) %></div>
+        </div>
+      <% end %>
+      <%# The field is never pre-filled: the stored secret cannot be read back, only replaced. %>
+      <%= form_with scope: :credential, url: super_admin_terranet_isp_provider_secret_path(account_id: @account.id, provider: @provider), method: :patch do |f| %>
+        <div class="grid gap-x-8 gap-y-1.5 px-5 py-4 sm:grid-cols-[16rem_minmax(0,1fr)]">
+          <div class="text-label text-n-slate-12 sm:pt-1.5"><%= f.label :secret, t("terranet_isp.provider.secret_label_#{@provider}") %></div>
+          <div class="max-w-2xl space-y-3">
+            <%= f.password_field :secret, value: nil, class: ui(:input), autocomplete: 'new-password', spellcheck: false, maxlength: 512,
+                                 placeholder: t('terranet_isp.provider.secret_placeholder'), disabled: !encryption_ok, required: true %>
+            <%= render 'button', label: t(@credential.secret_configured? ? 'terranet_isp.provider.rotate' : 'terranet_isp.provider.set'), submit: f, disabled: !encryption_ok %>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+
+  <%= render 'card', title: t('terranet_isp.provider.test') do %>
+    <div class="space-y-4 px-5 py-4">
+      <p class="text-body-main text-n-slate-11"><%= t('terranet_isp.provider.test_note') %></p>
+      <% if @credential.persisted? %>
+        <%= render 'button', label: t('terranet_isp.provider.test'), icon: 'i-lucide-plug-zap', variant: :secondary,
+                   post_to: super_admin_terranet_isp_provider_test_path(account_id: @account.id, provider: @provider),
+                   disabled: !(encryption_ok && @credential.secret_configured?) %>
+      <% end %>
+      <% if @credential.last_checked_at %>
+        <dl class="grid gap-x-8 gap-y-1 text-body-main sm:grid-cols-[16rem_minmax(0,1fr)]">
+          <dt class="text-label text-n-slate-12"><%= t('terranet_isp.provider.last_check') %></dt><dd><%= l(@credential.last_checked_at, format: :short) %></dd>
+          <dt class="text-label text-n-slate-12"><%= t('terranet_isp.provider.latency') %></dt><dd class="tabular-nums"><%= @credential.last_latency_ms %> ms</dd>
+          <dt class="text-label text-n-slate-12"><%= t('terranet_isp.provider.error_code') %></dt>
+          <dd><%= @credential.last_error_code.presence || 'ok' %></dd>
+        </dl>
+      <% end %>
+    </div>
+  <% end %>
+
+  <%= render 'card', title: t('terranet_isp.provider.history') do %>
+    <% if @checks.blank? %>
+      <p class="px-5 py-4 text-body-main text-n-slate-11"><%= t('terranet_isp.provider.no_history') %></p>
+    <% else %>
+      <ul class="divide-y divide-n-weak">
+        <% @checks.each do |check| %>
+          <li class="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-2.5 text-body-main">
+            <%= render 'badge', label: (check.ok ? 'ok' : check.error_code), tone: (check.ok ? :success : :danger) %>
+            <span class="text-n-slate-11"><%= l(check.created_at, format: :short) %></span>
+            <span class="tabular-nums text-n-slate-11"><%= check.latency_ms %> ms</span>
+            <span class="text-n-slate-11"><%= check.mode %></span>
+          </li>
+        <% end %>
+      </ul>
+    <% end %>
+  <% end %>
+</div>

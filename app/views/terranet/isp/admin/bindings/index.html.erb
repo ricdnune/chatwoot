@@ -1,0 +1,46 @@
+<%= render 'terranet/isp/admin/shared/header', account: @account, active: :identity %>
+<div class="space-y-4">
+  <p class="text-body-main text-n-slate-11"><%= t('terranet_isp.identity.note') %></p>
+  <% if @bindings.empty? %>
+    <%= render 'card', title: t('terranet_isp.tabs.identity') do %><p class="px-5 py-4 text-body-main text-n-slate-11"><%= t('terranet_isp.identity.empty') %></p><% end %>
+  <% else %>
+    <%= render 'card', title: t('terranet_isp.tabs.identity'), count: @bindings.size do %>
+      <div class="overflow-x-auto">
+        <table class="w-full text-body-main">
+          <thead>
+            <tr class="border-b border-n-weak text-label-small text-n-slate-11">
+              <% %w[contact service onu matched_by status decision].each do |column| %>
+                <th class="px-4 py-2 text-start font-medium"><%= t("terranet_isp.identity.#{column}") %></th>
+              <% end %>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-n-weak">
+            <% @bindings.each do |binding_record| %>
+              <% contact = @contacts[binding_record.contact_id] %>
+              <tr>
+                <td class="px-4 py-3 text-n-slate-12"><%= contact&.name || '-' %></td>
+                <td class="px-4 py-3 font-mono text-xs text-n-slate-11"><%= binding_record.wisphub_service_id %></td>
+                <td class="px-4 py-3 font-mono text-xs text-n-slate-11"><%= binding_record.smartolt_external_id.presence || '-' %></td>
+                <td class="px-4 py-3 text-n-slate-11"><%= binding_record.matched_by %></td>
+                <td class="px-4 py-3"><%= render 'badge', label: binding_record.status, tone: { 'confirmed' => :success, 'rejected' => :danger, 'revoked' => :warning, 'candidate' => :info }.fetch(binding_record.status) %></td>
+                <td class="px-4 py-3">
+                  <% decisions = binding_record.status == 'candidate' ? %w[confirm reject] : (binding_record.status == 'confirmed' ? %w[revoke] : []) %>
+                  <% if decisions.any? %>
+                    <%= form_with url: super_admin_terranet_isp_binding_decision_path(account_id: @account.id, id: binding_record.id), method: :post, class: 'flex flex-wrap items-center gap-2' do |f| %>
+                      <%= select_tag :reason, options_for_select(Terranet::Isp::Binding::REASONS.map { |r| [t("terranet_isp.identity.reasons.#{r}"), r] }), class: ui(:select, 'w-52'), 'aria-label': t('terranet_isp.identity.reason') %>
+                      <% decisions.each do |decision| %>
+                        <button type="submit" name="decision" value="<%= decision %>" class="inline-flex h-9 cursor-pointer items-center rounded-lg border px-3 text-button <%= decision == 'confirm' ? 'border-transparent bg-n-brand text-white hover:bg-n-blue-10' : 'border-n-slate-6 bg-n-solid-1 text-n-slate-12 hover:bg-n-slate-3' %>"><%= t("terranet_isp.identity.#{decision}") %></button>
+                      <% end %>
+                    <% end %>
+                  <% else %>
+                    <span class="text-n-slate-11"><%= binding_record.decision_reason && t("terranet_isp.identity.reasons.#{binding_record.decision_reason}") %></span>
+                  <% end %>
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      </div>
+    <% end %>
+  <% end %>
+</div>

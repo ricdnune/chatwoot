@@ -1,0 +1,105 @@
+es:
+  terranet_isp:
+    nav:
+      label: Terranet ISP
+    title: Terranet ISP
+    description: Conexiones con proveedores, identidad de abonados y auditoría. En este laboratorio toda conexión es simulada.
+    account: Cuenta
+    switch: Cambiar
+    tabs:
+      general: General
+      wisphub: WispHub
+      smartolt: SmartOLT
+      identity: Identidad
+      audit: Auditoría
+    mode:
+      label: Modo
+      mock: Simulado (mock local)
+      live: En vivo
+      mock_note: No se contacta a ningún proveedor real. Las pruebas de conexión solo llegan al servidor mock local.
+      live_note: Modo EN VIVO activado. Solo se permiten llamadas aprobadas y de solo lectura.
+    general:
+      version: Versión de Terranet ISP
+      privacy: Telemetría de Chatwoot
+      privacy_on: Desactivada (modo privacidad)
+      privacy_off: No desactivada
+      encryption: Cifrado de credenciales
+      encryption_ok: Configurado
+      encryption_missing: "No configurado: no se pueden guardar ni usar credenciales"
+      providers: Proveedores
+      pending: Candidatos de identidad pendientes de decisión humana
+      last_test: Última prueba
+      never: Nunca
+      no_accounts: Cree primero una cuenta. La configuración de proveedores es por cuenta.
+    status:
+      not_configured: No configurado
+      configured: Configurado (sin probar)
+      connected: Conectado
+      error: Error
+    provider:
+      environment: Entorno
+      sandbox: Pruebas (sandbox)
+      production: Producción
+      subdomain: Subdominio de SmartOLT
+      subdomain_help: Solo el nombre antes de .smartolt.com (letras, dígitos y guiones). Nunca se usa como URL.
+      credential: Credencial
+      credential_status: Estado de la credencial
+      credential_set: Guardada cifrada. No se vuelve a mostrar.
+      credential_unset: Sin credencial guardada.
+      secret_label_wisphub: Nueva Api-Key
+      secret_label_smartolt: Nuevo X-Token
+      secret_placeholder: Pegue un valor nuevo (el guardado no se puede mostrar)
+      set: Guardar credencial
+      rotate: Rotar credencial
+      rotated: Última rotación
+      rotated_by: Rotada por
+      settings: Ajustes
+      save_settings: Guardar ajustes
+      test: Probar conexión
+      test_note: Envía una petición de solo lectura al servidor mock local y registra latencia y resultado.
+      last_check: Última comprobación
+      latency: Latencia
+      error_code: Resultado
+      history: Comprobaciones recientes
+      no_history: Aún no hay comprobaciones.
+      switch_note: Cambiar de entorno elimina la credencial guardada (cada entorno tiene la suya).
+      encryption_blocked: "Faltan las claves de cifrado: este formulario está desactivado."
+      wisphub_note: Solo lectura. Use un usuario de personal de WispHub dedicado, solo con permisos de lectura.
+      smartolt_note: Solo lectura. La señal óptica solo se pide bajo demanda, nunca por sondeo.
+    identity:
+      note: Datos sintéticos de laboratorio. Nada está vinculado a un abonado real ni se confirma automáticamente.
+      contact: Contacto
+      service: Servicio WispHub
+      onu: ONU SmartOLT
+      matched_by: Coincidencia por
+      status: Estado
+      decision: Decisión
+      reason: Motivo
+      confirm: Confirmar
+      reject: Rechazar
+      revoke: Revocar
+      empty: Sin candidatos. Ejecute la tarea de siembra del laboratorio para crear sintéticos.
+      reasons:
+        verified_with_subscriber: Verificado con el abonado
+        verified_by_document: Verificado por documento
+        data_mismatch: Datos no coinciden
+        duplicate_service: Servicio duplicado
+        other: Otro
+    audit:
+      when: Cuándo
+      who: Actor
+      action: Acción
+      outcome: Resultado
+      details: Detalles
+      empty: Aún no hay eventos de auditoría.
+      note: Configuración, pruebas y decisiones. Nunca se registran secretos, cuerpos HTTP ni datos de abonados.
+    flash:
+      settings_saved: Ajustes guardados.
+      settings_invalid: No se pudieron guardar los ajustes.
+      secret_saved: Credencial guardada cifrada.
+      secret_invalid: Credencial rechazada. Use de 8 a 512 caracteres imprimibles sin espacios.
+      encryption_missing: Las claves de cifrado no están configuradas. No se guardó nada.
+      check_ok: Prueba de conexión correcta (simulada).
+      check_failed: La prueba de conexión falló. Vea el resultado en esta página.
+      decision_saved: Decisión registrada.
+      decision_invalid: Esa decisión no está permitida.

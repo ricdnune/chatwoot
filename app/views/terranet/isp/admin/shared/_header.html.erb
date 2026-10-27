@@ -1,0 +1,30 @@
+<%# locals: (account:, active:) -%>
+<% tabs = [
+     [:general, super_admin_terranet_isp_overview_path(account_id: account.id), 'i-lucide-layout-dashboard'],
+     [:wisphub, super_admin_terranet_isp_provider_path(account_id: account.id, provider: 'wisphub'), 'i-lucide-wifi'],
+     [:smartolt, super_admin_terranet_isp_provider_path(account_id: account.id, provider: 'smartolt'), 'i-lucide-router'],
+     [:identity, super_admin_terranet_isp_bindings_path(account_id: account.id), 'i-lucide-user-check'],
+     [:audit, super_admin_terranet_isp_audit_path(account_id: account.id), 'i-lucide-scroll-text']
+   ] %>
+<% content_for(:title) { t('terranet_isp.title') } %>
+<%= render 'page_header', title: t('terranet_isp.title'), description: t('terranet_isp.description') do %>
+  <% if isp_accounts.size > 1 %>
+    <%= form_with url: super_admin_terranet_isp_root_path, method: :get, class: 'flex items-center gap-2' do %>
+      <label for="isp_account" class="text-label text-n-slate-11"><%= t('terranet_isp.account') %></label>
+      <%= select_tag :account_id, options_from_collection_for_select(isp_accounts, :id, :name, account.id), id: 'isp_account', class: ui(:select) %>
+      <button type="submit" class="inline-flex h-9 cursor-pointer items-center rounded-lg border border-n-slate-6 bg-n-solid-1 px-3.5 text-button text-n-slate-12 hover:bg-n-slate-3 touch:h-11"><%= t('terranet_isp.switch') %></button>
+    <% end %>
+  <% end %>
+<% end %>
+
+<div class="mb-6 border-b border-n-weak">
+  <nav class="-mb-px flex gap-5 overflow-x-auto sm:gap-6" aria-label="Terranet ISP">
+    <% tabs.each do |key, url, icon| %>
+      <%= link_to url, class: 'inline-flex h-10 shrink-0 items-center gap-1.5 border-b-2 border-transparent text-body-main text-n-slate-11 hover:text-n-slate-12 aria-[current=page]:border-n-brand aria-[current=page]:font-medium aria-[current=page]:text-n-slate-12 touch:h-11',
+                  aria: { current: (key == active ? 'page' : nil) } do %>
+        <span class="<%= icon %> hidden size-4 sm:block"></span>
+        <%= t("terranet_isp.tabs.#{key}") %>
+      <% end %>
+    <% end %>
+  </nav>
+</div>
