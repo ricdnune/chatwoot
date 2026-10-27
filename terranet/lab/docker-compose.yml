@@ -4,6 +4,7 @@
 #  - `dns-sink` answers every non-lab name with a blackhole address and logs the query (egress audit).
 #  - `bootstrap` (profile) is the only app-code service with internet access (pnpm install); `gateway` also sits on
 #    the edge network but only runs socat port forwarders.
+#  - `egress-sink` + `audit` (profile) detect connection attempts that do not use DNS (see `lab.sh audit-egress`).
 # Uses the official docker/Dockerfile unchanged. No production host, bucket or secret is referenced.
 name: terranet-lab
 
@@ -25,6 +26,12 @@ x-app: &app
     - node_modules:/app/node_modules
     - packs:/app/public/packs
     - cache:/app/tmp/cache
+  # Community Edition: config/application.rb:49 puts enterprise/app/views FIRST in the view path even with
+  # DISABLE_ENTERPRISE=true, and e.g. the Enterprise confirmation mail calls Account#saml_enabled? (undefined in CE).
+  # An empty tmpfs over that directory (container only, host tree untouched) restores the OSS views.
+  # Production must instead ship an artifact built WITHOUT enterprise/ (see `lab.sh foss-check`).
+  tmpfs:
+    - /app/enterprise/app/views
 
 services:
   dns-sink:
@@ -33,6 +40,17 @@ services:
     networks:
       lab_internal:
         ipv4_address: 172.29.250.2
+
+  # Tripwire for connections that bypass DNS (direct IPs, hard-coded resolvers). Only the `audit` service routes
+  # through it (default route -> 172.29.250.3); tcpdump logs destination IP:port of every packet that arrives.
+  egress-sink:
+    build: ./dns-sink
+    restart: unless-stopped
+    cap_add: [NET_RAW, NET_ADMIN]
+    command: ["tcpdump", "-l", "-n", "-tt", "-i", "eth0", "ip and not dst net 172.29.250.0/24 and not dst net 224.0.0.0/4 and not dst host 255.255.255.255"]
+    networks:
+      lab_internal:
+        ipv4_address: 172.29.250.3
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -115,6 +133,17 @@ services:
         socat TCP-LISTEN:3036,fork,reuseaddr TCP:vite:3036 &
         socat TCP-LISTEN:8025,fork,reuseaddr TCP:mailpit:8025 &
         wait
+
+  # One-shot runner for `lab.sh audit-egress`: like rails, but its default route points at egress-sink so that
+  # even direct-IP connection attempts become visible. NET_ADMIN is needed only to set that route.
+  audit:
+    <<: *app
+    profiles: [audit]
+    cap_add: [NET_ADMIN]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    entrypoint: ["sh", "-c", "ip route replace default via 172.29.250.3 && exec \"$$@\"", "sh"]
 
   bootstrap:
     <<: *app
