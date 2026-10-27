@@ -60,7 +60,7 @@ case "${1:-help}" in
     chmod 600 .env; echo ".env created (gitignored, dev-only secrets)";;
   build)     $DC build rails;;
   bootstrap) $DC --profile bootstrap run --rm bootstrap;;   # only step with internet: pnpm install
-  up)        $DC up -d postgres redis mailpit dns-sink
+  up)        $DC up -d --build postgres redis mailpit dns-sink isp-mock
              # db:migrate always re-dumps db/schema.rb (lib/tasks/db_enhancements.rake). Preparing the lab DB runs on a
              # disposable COPY mounted over db/schema.rb, so the tracked file is never touched. Schema changes made while
              # developing a migration go through `lab.sh rails db:migrate` (no copy) and show up in git as intended.
@@ -145,7 +145,7 @@ case "${1:-help}" in
       end"' 2>&1 | grep -E "^(enterprise\?|confirmation|copy)|rror" | head
     if [ $# -gt 0 ]; then
       ensure_test_db
-      $DC run --rm -v "$FOSS:/app" "${TEST_ENV[@]}" rails sh -c "unset DISABLE_ENTERPRISE $SPEC_UNSET; exec bundle exec rspec \"\$@\"" rspec "$@" 2>&1 | grep -E "examples,|^rspec " | cut -c1-200
+      $DC run --rm -v "$FOSS:/app" "${TEST_ENV[@]}" rails sh -c "unset DISABLE_ENTERPRISE $SPEC_UNSET; exec bundle exec rspec \"\$@\"" rspec "$@" 2>&1 | tee "${FOSS_LOG:-/dev/null}" | grep -E "examples,|^rspec " | cut -c1-200   # FOSS_LOG=file keeps the full RSpec output
     fi
     ;;
   vitest)    shift; $DC run --rm rails pnpm test "$@";;
