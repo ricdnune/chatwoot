@@ -1,0 +1,11 @@
+# Terranet branding, applied to installation_configs by `rails terranet:branding:apply` (idempotent; see lib/terranet/branding.rb).
+# Only keys listed in Terranet::Branding::KEYS are ever written. Logo files live in public/brand-assets/terranet/ and are
+# generated from the original logo by terranet/branding/build_assets.py (PROVISIONAL until the official vector logo exists).
+INSTALLATION_NAME: Terranet
+BRAND_NAME: Terranet
+# ASSUMPTION: Terranet's public site. Confirm with the owner; it is linked from email footers and the widget/portal "Powered by".
+BRAND_URL: https://terranet.com.ec
+WIDGET_BRAND_URL: https://terranet.com.ec
+LOGO: /brand-assets/terranet/logo.png
+LOGO_DARK: /brand-assets/terranet/logo_dark.png
+LOGO_THUMBNAIL: /brand-assets/terranet/logo_thumbnail.png

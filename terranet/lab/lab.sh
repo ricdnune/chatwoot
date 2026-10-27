@@ -71,6 +71,8 @@ case "${1:-help}" in
              # GlobalConfigService persists env-provided configs (e.g. DISABLE_GRAVATAR) into installation_configs on first read;
              # warm it once so concurrent first reads in Sidekiq don't race on the unique index (harmless but noisy retries).
              $DC run --rm rails bundle exec rails runner 'GlobalConfigService.load("DISABLE_GRAVATAR", "")' >/dev/null 2>&1 || true
+             # Terranet branding (idempotent, whitelisted keys): see lib/terranet/branding.rb
+             with_tree_check $DC run --rm rails bundle exec rails terranet:branding:apply
              $DC up -d rails sidekiq vite gateway;;
   seed)      with_tree_check $DC run --rm rails bundle exec rails db:seed;;   # not needed after `up` (prepare seeds a fresh DB)
   down)      $DC down;;
