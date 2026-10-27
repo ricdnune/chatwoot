@@ -91,6 +91,7 @@ case "${1:-help}" in
   # Terranet's own regression specs (privacy mode, endpoint tripwire, avatar/onboarding/push guards)
   rspec-terranet) shift; "$0" rspec spec/lib/terranet spec/jobs/internal/check_new_versions_job_privacy_spec.rb spec/jobs/avatar/avatar_from_gravatar_job_privacy_spec.rb spec/jobs/avatar/avatar_from_favicon_job_privacy_spec.rb spec/controllers/installation/onboarding_controller_privacy_spec.rb spec/services/notification/push_notification_service_privacy_spec.rb "$@";;
   rspec-privacy) shift; ensure_test_db; $DC run --rm "${TEST_ENV[@]}" -e TERRANET_PRIVACY_MODE=true -e DISABLE_TELEMETRY=true -e DISABLE_GRAVATAR=1 rails bundle exec rspec --exclude-pattern "spec/enterprise/**/*_spec.rb" "$@";;
+  rubocop)   shift; $DC run --rm rails bundle exec rubocop "$@";;
   rspec)     shift; ensure_test_db; $DC run --rm "${TEST_ENV[@]}" rails sh -c "unset $SPEC_UNSET; exec bundle exec rspec --exclude-pattern 'spec/enterprise/**/*_spec.rb' \"\$@\"" rspec "$@";;
   # Production-flow simulation with synthetic data and no real services: RAILS_ENV=production on a disposable DB
   # (chatwoot_prodsim, Redis index 6), routed through egress-sink. PASS = privacy run leaves no DNS query for

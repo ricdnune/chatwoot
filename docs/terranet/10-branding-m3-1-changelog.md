@@ -39,11 +39,27 @@ No se tocó `enterprise/`, no se editó ningún archivo i18n ni se hizo búsqued
 | `before-dashboard-light-desktop.jpg` | `after-dashboard-light-desktop.jpg`, `after-dashboard-dark-desktop.jpg`, `after-dashboard-menu-mobile.jpg` |
 | `before-superadmin-dashboard.jpg` | `after-superadmin-login.jpg`, `after-superadmin-dashboard.jpg` |
 | — | `after-email-password-reset.jpg` (correo en Mailpit), `after-favicon-set.png` (iconos 16/32/96, insignia de no leídos, Apple/Android) |
-Los "antes" se capturaron con `terranet:branding:revert` (prueba de que la reversión restaura la apariencia upstream) y los "después" tras `apply`. Datos 100 % sintéticos del seed.
+Los "antes" se capturaron con la tarea `terranet:branding:revert` (retirada en M3.2, ver §7) (equivalente actual: `reset_to_upstream_defaults`; prueba de que se restaura la apariencia upstream) y los "después" tras `apply`. Datos 100 % sintéticos del seed.
 
 ## 6. Pruebas (comandos y resultados, 2026-10-27)
 Ver el reporte final y `03` §5. Resumen: specs de branding 13/0 fallos; Super Admin 151+8 ejemplos/0 fallos; FOSS (sin `enterprise/`) 363/0; Vitest 1 672/0 (no se cambió JS); `audit-egress` PASS tras el cambio; todas las pantallas cargan solo desde `127.0.0.1:13000` (sin recursos externos).
 
-## 7. Reversión
-- **Datos (lab/prod):** `rails terranet:branding:revert` (restaura los 7 valores upstream desde `config/installation_config.yml`).
-- **Código:** `git revert` de los commits de la rama (los iconos vuelven con `git checkout v4.19.1 -- public/*.png`); las vistas de Super Admin ya caen a los valores upstream si la configuración está vacía.
+## 7. Reversión (corregida en M3.2)
+`revert` restauraba siempre los valores de upstream, lo que **destruía personalizaciones previas** de una instalación real. Se sustituye por dos operaciones distintas:
+
+| Tarea | Qué hace | Cuándo usarla |
+|---|---|---|
+| `rails terranet:branding:apply` | Antes de la **primera** escritura guarda una instantánea de las 7 claves (presente/ausente + valor exacto) y aplica los valores Terranet. Idempotente; todo o nada (transacción con bloqueo de filas; si falla se deshace todo y se borra la instantánea creada en esa ejecución). | Despliegue de la marca |
+| `rails terranet:branding:restore` | Devuelve **exactamente** lo que había antes del primer `apply`: restaura valores, recrea claves que existían y **elimina** las que no existían. Sin instantánea aborta con error (no adivina valores). Tras restaurar archiva la instantánea (`…restored-<UTC>.json`). | Rollback real |
+| `rails terranet:branding:reset_to_upstream_defaults` | Escribe los valores por defecto de `config/installation_config.yml`. **No** es "volver al estado anterior". | Dejar la instalación en blanco upstream, a propósito |
+| `rails terranet:branding:status` | Actual vs deseado y presencia de la instantánea. | Auditoría |
+
+`DRY_RUN=1` está disponible en `apply`, `restore` y `reset_to_upstream_defaults` al ejecutar `rails` directamente (el wrapper `lab.sh` no reenvía variables de entorno al contenedor; la ruta de dry-run está cubierta por specs).
+
+**Instantánea:** `tmp/terranet/branding_backup.json` (ignorada por git, modo `0600`, directorio `0700`, escritura atómica, nunca se sobrescribe una instantánea existente). Solo contiene las 7 claves de marca (nombres y URLs públicas, ningún secreto). En contenedores `tmp/` es efímero: fijar `TERRANET_BRANDING_BACKUP=/ruta/en/volumen/persistente/branding_backup.json` **antes** del primer `apply` en cualquier despliegue real y conservar el archivo hasta confirmar la marca. Si se pierde la instantánea no hay forma de reconstruir los valores originales desde el sistema.
+
+Una instantánea manipulada (clave fuera de la lista blanca, clave ausente, entrada mal formada) se rechaza.
+
+**Pruebas (24 ejemplos, 0 fallos):** apply → restore exacto con valores personalizados; claves previamente ausentes; la instantánea original sobrevive a `apply` repetidos y a un reset; permisos `0600`; dry run sin escritura ni instantánea; fallo a mitad de `apply` (sin cambios ni instantánea) y a mitad de `restore` (sin cambios, instantánea intacta); instantánea manipulada; restore sin instantánea. Demostración manual en el laboratorio: instalación con `INSTALLATION_NAME=Acme Demo` y sin `BRAND_URL` → `apply` → `restore` devuelve `Acme Demo` y elimina `BRAND_URL`.
+
+**Código:** `git revert` de los commits de la rama (los iconos vuelven con `git checkout v4.19.1 -- public/*.png`); las vistas de Super Admin ya caen a los valores upstream si la configuración está vacía.

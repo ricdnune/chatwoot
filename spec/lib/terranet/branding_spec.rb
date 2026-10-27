@@ -3,12 +3,22 @@ require 'rails_helper'
 RSpec.describe Terranet::Branding do
   let(:terranet) { described_class.terranet_values }
   let(:upstream) { described_class.upstream_values }
+  let(:backup_dir) { Dir.mktmpdir('terranet-branding') }
+  let(:backup) { Pathname.new(backup_dir).join('branding_backup.json') }
 
   def stored(key)
     InstallationConfig.find_by(name: key)&.value
   end
 
-  before { described_class.revert }
+  around do |example|
+    with_modified_env(TERRANET_BRANDING_BACKUP: backup.to_s) do
+      described_class.reset_to_upstream_defaults
+      backup.delete if backup.exist?
+      example.run
+    ensure
+      FileUtils.remove_entry(backup_dir)
+    end
+  end
 
   describe '.apply' do
     it 'writes every whitelisted key with the Terranet values' do
@@ -75,12 +85,132 @@ RSpec.describe Terranet::Branding do
     end
   end
 
-  describe '.revert' do
-    it 'restores upstream defaults for the branding keys only' do
+  describe '.reset_to_upstream_defaults' do
+    it 'overwrites the branding keys with upstream defaults' do
       described_class.apply
-      described_class.revert
+      described_class.reset_to_upstream_defaults
 
       expect(upstream.keys.index_with { |key| stored(key) }).to eq(upstream)
+    end
+  end
+
+  describe 'snapshot and .restore_previous' do
+    let(:customised) { { 'INSTALLATION_NAME' => 'Acme Support', 'LOGO' => '/acme/logo.svg' } }
+
+    before { customised.each { |key, value| InstallationConfig.find_by!(name: key).update!(value: value) } }
+
+    def stored_state
+      Terranet::Branding::KEYS.index_with { |key| InstallationConfig.find_by(name: key)&.value }
+    end
+
+    it 'restores the exact customised values, not upstream defaults' do
+      before_state = stored_state
+      described_class.apply
+      described_class.restore_previous
+
+      expect(stored_state).to eq(before_state)
+      expect(stored('INSTALLATION_NAME')).to eq('Acme Support')
+    end
+
+    it 'removes keys that did not exist before apply and recreates the ones that did' do
+      InstallationConfig.find_by!(name: 'BRAND_URL').destroy!
+      before_state = stored_state
+      described_class.apply
+      expect(stored('BRAND_URL')).to eq(terranet['BRAND_URL'])
+
+      described_class.restore_previous
+
+      expect(stored_state).to eq(before_state)
+      expect(InstallationConfig.exists?(name: 'BRAND_URL')).to be(false)
+    end
+
+    it 'keeps the ORIGINAL snapshot across repeated applies and an upstream reset' do
+      before_state = stored_state
+      described_class.apply
+      described_class.reset_to_upstream_defaults
+      described_class.apply
+      described_class.restore_previous
+
+      expect(stored_state).to eq(before_state)
+    end
+
+    it 'writes the snapshot with owner-only permissions and no secrets beyond the 7 whitelisted keys' do
+      described_class.apply
+
+      expect(backup.stat.mode & 0o777).to eq(0o600)
+      expect(JSON.parse(backup.read)['keys'].keys).to match_array(Terranet::Branding::KEYS)
+    end
+
+    it 'does not write or snapshot anything on a dry run' do
+      described_class.apply(dry_run: true)
+
+      expect(backup).not_to exist
+      expect(stored('INSTALLATION_NAME')).to eq('Acme Support')
+    end
+
+    it 'previews a restore without writing and keeps the snapshot' do
+      described_class.apply
+      changes = described_class.restore_previous(dry_run: true)
+
+      expect(changes['INSTALLATION_NAME']).to eq(['Terranet', 'Acme Support'])
+      expect(stored('INSTALLATION_NAME')).to eq('Terranet')
+      expect(backup).to exist
+    end
+
+    it 'archives the snapshot after a restore so the next apply snapshots the then-current state' do
+      described_class.apply
+      described_class.restore_previous
+
+      expect(backup).not_to exist
+      expect(Dir.children(backup_dir)).to include(a_string_matching(/branding_backup\.restored-\d{8}T\d{6}Z\.json/))
+    end
+
+    it 'refuses to restore without a snapshot instead of guessing upstream values' do
+      expect { described_class.restore_previous }.to raise_error(Terranet::Branding::NoBackupError, /reset_to_upstream_defaults/)
+      expect(stored('INSTALLATION_NAME')).to eq('Acme Support')
+    end
+
+    it 'rejects a tampered snapshot (foreign key, missing key, malformed entry)' do
+      described_class.apply
+      good = JSON.parse(backup.read)
+
+      [good.deep_merge('keys' => { 'CAPTAIN_OPEN_AI_API_KEY' => { 'present' => true, 'value' => 'x' } }),
+       { 'keys' => good['keys'].except('LOGO') },
+       good.deep_merge('keys' => { 'LOGO' => { 'present' => 'yes' } })].each do |tampered|
+        backup.write(JSON.generate(tampered))
+        expect { described_class.restore_previous }.to raise_error(ArgumentError)
+      end
+    end
+
+    it 'is all-or-nothing: a failure in the middle of apply rolls back every key and leaves no snapshot' do
+      before_state = stored_state
+      calls = 0
+      allow(described_class).to receive(:write_value).and_wrap_original do |original, *args|
+        calls += 1
+        raise ActiveRecord::RecordInvalid if calls == 3
+
+        original.call(*args)
+      end
+
+      expect { described_class.apply }.to raise_error(ActiveRecord::RecordInvalid)
+      expect(stored_state).to eq(before_state)
+      expect(backup).not_to exist
+    end
+
+    it 'is all-or-nothing on restore as well' do
+      described_class.apply
+      applied = stored_state
+      calls = 0
+      allow(described_class).to receive(:write_value).and_wrap_original do |original, *args|
+        calls += 1
+        raise ActiveRecord::RecordInvalid if calls == 2
+
+        original.call(*args)
+      end
+
+      expect { described_class.restore_previous }.to raise_error(ActiveRecord::RecordInvalid)
+      expect(stored_state).to eq(applied)
+      expect(backup).to exist
     end
   end
 
