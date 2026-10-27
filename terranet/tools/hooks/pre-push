@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 # Pre-push: scan every commit about to leave this machine. Install with terranet/tools/install_hooks.sh
+#  1) secrets (gitleaks, fail-closed)   2) public-disclosure heuristics   3) explicit human attestation
+# The fork is PUBLIC: after reading the diff for infrastructure, customer data, hostnames and evidence images, push with
+#   TERRANET_DISCLOSURE_REVIEWED=1 git push ...
 set -euo pipefail
 zero=0000000000000000000000000000000000000000
+tools="$(git rev-parse --show-toplevel)/terranet/tools"
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$zero" ] && continue          # deleting a ref: nothing to scan
   if [ "$remote_sha" = "$zero" ]; then range=("$local_sha" --not --remotes); else range=("$remote_sha..$local_sha"); fi
-  "$(git rev-parse --show-toplevel)/terranet/tools/secret_scan.sh" "${range[@]}" || { echo "pre-push: blocked $local_ref" >&2; exit 1; }
+  "$tools/secret_scan.sh" "${range[@]}" || { echo "pre-push: blocked $local_ref (secrets)" >&2; exit 1; }
+  "$tools/disclosure_scan.sh" "${range[@]}" || { echo "pre-push: blocked $local_ref (disclosure)" >&2; exit 1; }
+  if [ "${TERRANET_DISCLOSURE_REVIEWED:-}" != "1" ]; then
+    echo "pre-push: blocked $local_ref. The fork is PUBLIC: read the diff (docs, evidence images, hostnames, customer data), then push with TERRANET_DISCLOSURE_REVIEWED=1" >&2
+    exit 1
+  fi
 done

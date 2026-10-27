@@ -108,3 +108,6 @@ Procfile.worktree
 
 # Cache that `rake ruby_llm:refresh_models` writes next to the model registry
 config/llm_models.json.published.json
+
+# Terranet: local-only denylist of names that must never be published (see terranet/tools/disclosure_scan.sh)
+terranet/tools/disclosure_patterns.local
